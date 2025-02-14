@@ -6,7 +6,7 @@ from scipy.stats import zscore
 from googleapiclient.discovery import build
 
 # API Key (Replace with your actual API key)
-YOUTUBE_API_KEY = "YOUR_YOUTUBE_API_KEY"
+YOUTUBE_API_KEY = "AIzaSyBoDd0TbpH0-NehCVi_QHc4p_lKmjCeIyY"
 
 # Function to extract video ID from URL
 def extract_video_id(url):
