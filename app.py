@@ -1,162 +1,108 @@
 import streamlit as st
-from googleapiclient.discovery import build
+import requests
+import numpy as np
 import pandas as pd
+from scipy.stats import zscore
+from googleapiclient.discovery import build
 
-# API Key (Replace with your own API key)
-API_KEY = "AIzaSyA8Sq9m4VQAen1moeVw9kkaZw575z3rQY0"
+# API Key (Replace with your actual API key)
+YOUTUBE_API_KEY = "YOUR_YOUTUBE_API_KEY"
 
-def get_channel_stats(channel_id):
-    """Fetch channel statistics including subscriber count, total views, and video count."""
-    youtube = build("youtube", "v3", developerKey=API_KEY)
-    request = youtube.channels().list(
-        part="snippet,statistics",
-        id=channel_id
-    )
-    response = request.execute()
-    if "items" in response:
-        channel_data = response["items"][0]
-        stats = channel_data["statistics"]
-        return {
-            "title": channel_data["snippet"]["title"],
-            "thumbnail": channel_data["snippet"]["thumbnails"].get("default", {}).get("url", ""),
-            "subscribers": int(stats.get("subscriberCount", 0)),
-            "views": int(stats.get("viewCount", 0)),
-            "videos": int(stats.get("videoCount", 0))
-        }
+# Function to extract video ID from URL
+def extract_video_id(url):
+    if "youtu.be" in url:
+        return url.split("/")[-1]
+    elif "youtube.com/watch?v=" in url:
+        return url.split("v=")[1].split("&")[0]
     return None
 
-def get_video_stats(video_id):
-    """Fetch video statistics and metadata."""
-    youtube = build("youtube", "v3", developerKey=API_KEY)
+# Function to fetch video details
+def get_video_data(video_id):
+    youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+    
     request = youtube.videos().list(
-        part="snippet,statistics,contentDetails",
+        part="statistics,snippet",
         id=video_id
     )
     response = request.execute()
-    if "items" in response:
-        video_data = response["items"][0]
-        stats = video_data["statistics"]
-        duration = video_data["contentDetails"]["duration"]
-        is_short = "PT" in duration and "M" not in duration  # Detecting if it's a short
-        return {
-            "title": video_data["snippet"]["title"],
-            "views": int(stats.get("viewCount", 0)),
-            "likes": int(stats.get("likeCount", 0)),
-            "comments": int(stats.get("commentCount", 0)),
-            "publish_date": video_data["snippet"].get("publishedAt", ""),
-            "thumbnail": video_data["snippet"]["thumbnails"].get("medium", {}).get("url", ""),
-            "is_short": is_short,
-            "video_id": video_id
-        }
-    return None
 
-def get_video_comments(video_id, max_results=10):
-    """Fetch comments for a given video."""
-    youtube = build("youtube", "v3", developerKey=API_KEY)
+    if "items" not in response or not response["items"]:
+        return None
+
+    video_data = response["items"][0]
+    stats = video_data["statistics"]
+    snippet = video_data["snippet"]
+
+    return {
+        "title": snippet["title"],
+        "views": int(stats.get("viewCount", 0)),
+        "likes": int(stats.get("likeCount", 0)),
+        "comments": int(stats.get("commentCount", 0)),
+        "channel": snippet["channelTitle"]
+    }
+
+# Function to fetch comments
+def get_video_comments(video_id, max_comments=10):
+    youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+    
     request = youtube.commentThreads().list(
         part="snippet",
         videoId=video_id,
-        maxResults=max_results
+        maxResults=max_comments,
+        textFormat="plainText"
     )
     response = request.execute()
+
     comments = []
-    if "items" in response:
-        for item in response["items"]:
-            comment = item["snippet"]["topLevelComment"]["snippet"]
-            comments.append({
-                "author": comment["authorDisplayName"],
-                "comment": comment["textDisplay"],
-                "likes": comment["likeCount"],
-                "published": comment["publishedAt"]
-            })
+    for item in response.get("items", []):
+        comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+        comments.append(comment)
+    
     return comments
 
-def get_top_videos(channel_id, max_results=10):
-    """Fetch top performing videos based on views."""
-    youtube = build("youtube", "v3", developerKey=API_KEY)
-    request = youtube.search().list(
-        part="snippet",
-        channelId=channel_id,
-        maxResults=max_results,
-        order="viewCount",
-        type="video"
-    )
-    response = request.execute()
-    videos = []
-    for item in response["items"]:
-        video_id = item["id"]["videoId"]
-        video_stats = get_video_stats(video_id)
-        if video_stats:
-            videos.append(video_stats)
-    return videos
+# Function to compute outlier score
+def calculate_outlier_score(view_count):
+    dataset = np.random.randint(1000, 1000000, size=100)  # Simulated dataset
+    dataset = np.append(dataset, view_count)  # Add current video views
+    scores = zscore(dataset)
+    return round(scores[-1], 2)
 
-def main():
-    if "page" not in st.session_state:
-        st.session_state.page = "home"
+# Streamlit UI
+st.title("📺 YouTube Video Data Explorer")
 
-    if st.session_state.page == "home":
-        st.title("YouTube Competitive Analysis & Outlier Detection")
-        st.markdown("---")
-        channel_url = st.text_input("Enter YouTube Channel ID or Video URL:")
+# Input box for YouTube URL
+video_url = st.text_input("Paste YouTube Video Link:")
 
-        if st.button("Analyze Channel"):
-            if "channel" in channel_url:
-                channel_id = channel_url.split("/")[-1]
-            elif "watch?v=" in channel_url:
-                video_id = channel_url.split("=")[-1]
-                video_stats = get_video_stats(video_id)
-                if video_stats:
-                    st.session_state.video_data = video_stats
-                    st.session_state.page = "video_detail"
-                    st.experimental_rerun()
-            else:
-                st.error("Invalid URL. Please enter a valid channel ID or video URL.")
-                return
+if video_url:
+    video_id = extract_video_id(video_url)
 
-            channel_stats = get_channel_stats(channel_id)
-            if channel_stats:
-                st.header(channel_stats["title"])
-                st.image(channel_stats["thumbnail"], width=100)
-                st.write(f"Subscribers: {channel_stats['subscribers']:,}")
-                st.write(f"Total Views: {channel_stats['views']:,}")
-                st.write(f"Total Videos: {channel_stats['videos']:,}")
+    if video_id:
+        with st.spinner("Fetching video data..."):
+            video_info = get_video_data(video_id)
+        
+        if video_info:
+            st.subheader(f"🎬 {video_info['title']}")
+            st.write(f"📺 Channel: {video_info['channel']}")
+            st.write(f"👀 Views: {video_info['views']:,}")
+            st.write(f"👍 Likes: {video_info['likes']:,}")
+            st.write(f"💬 Comments: {video_info['comments']:,}")
 
-                top_videos = get_top_videos(channel_id)
-                if top_videos:
-                    toggle = st.radio("Select Video Type", ("Longform Videos", "Shorts"))
-                    df_videos = pd.DataFrame(top_videos)
-                    if toggle == "Longform Videos":
-                        df_videos = df_videos[df_videos["is_short"] == False]
-                    else:
-                        df_videos = df_videos[df_videos["is_short"] == True]
+            # Outlier Score Calculation
+            outlier_score = calculate_outlier_score(video_info["views"])
+            st.write(f"📊 **Outlier Score:** {outlier_score}")
 
-                    if not df_videos.empty:
-                        st.dataframe(df_videos[["title", "views", "likes", "comments"]].style.format({
-                            "views": "{:,}", "likes": "{:,}", "comments": "{:,}"}))
-                    else:
-                        st.write("No videos found for the selected category.")
-            else:
-                st.error("Failed to fetch channel details. Please check the ID.")
+            # Fetch Comments
+            with st.spinner("Fetching comments..."):
+                comments = get_video_comments(video_id)
+            
+            if comments:
+                st.subheader("💬 Top Comments:")
+                for comment in comments:
+                    st.write(f"- {comment}")
 
-    elif st.session_state.page == "video_detail":
-        video_data = st.session_state.video_data
-        st.title(video_data["title"])
-        st.image(video_data["thumbnail"], width=300)
-        st.write(f"Views: {video_data['views']:,}")
-        st.write(f"Likes: {video_data['likes']:,}")
-        st.write(f"Comments: {video_data['comments']:,}")
-
-        st.markdown("### Top Comments")
-        comments = get_video_comments(video_data["video_id"])
-        if comments:
-            df_comments = pd.DataFrame(comments)
-            st.dataframe(df_comments[["author", "comment", "likes", "published"]])
         else:
-            st.write("No comments found.")
+            st.error("Invalid Video URL or Data Not Available")
 
-        if st.button("Back to Home"):
-            st.session_state.page = "home"
-            st.experimental_rerun()
+    else:
+        st.error("Invalid YouTube Link")
 
-if __name__ == "__main__":
-    main()
