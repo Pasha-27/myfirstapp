@@ -3,10 +3,9 @@ import numpy as np
 import pandas as pd
 from scipy.stats import zscore
 from googleapiclient.discovery import build
-import ace_tools as tools  # Required for displaying tables in Streamlit
 
 # API Key (Replace with your actual API key)
-YOUTUBE_API_KEY = "AIzaSyBoDd0TbpH0-NehCVi_QHc4p_lKmjCeIyY"
+YOUTUBE_API_KEY = "YOUR_YOUTUBE_API_KEY"
 
 # Initialize YouTube API
 def get_youtube_service():
@@ -148,14 +147,15 @@ if search_query:
         else:
             df = df.sort_values(by="Outlier Score", ascending=False)
 
-        # Display video data
-        tools.display_dataframe_to_user(name="YouTube Search Results", dataframe=df)
+        # Display video data in Streamlit
+        st.subheader("📊 YouTube Search Results")
+        st.dataframe(df)
 
         # Display comments separately
         st.subheader("📢 Top Comments for Each Video")
         for _, row in df_comments.iterrows():
             st.markdown(f"**Video:** [{row['Video ID']}](https://www.youtube.com/watch?v={row['Video ID']})")
-            st.text_area("Comments", row["Comments"], height=150)
+            st.text_area("Comments", row["Comments"], height=150, key=row["Video ID"])
 
     else:
         st.error("No videos found. Try a different keyword.")
