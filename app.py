@@ -3,7 +3,7 @@ from googleapiclient.discovery import build
 import pandas as pd
 
 # API Key (Replace with your own API key)
-API_KEY = "YOUR_API_KEY"
+API_KEY = "AIzaSyA8Sq9m4VQAen1moeVw9kkaZw575z3rQY0"
 
 def get_channel_stats(channel_id):
     """Fetch channel statistics including subscriber count, total views, and video count."""
