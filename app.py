@@ -1,49 +1,67 @@
 import streamlit as st
-import requests
 import numpy as np
 import pandas as pd
 from scipy.stats import zscore
 from googleapiclient.discovery import build
+import ace_tools as tools  # Required for displaying tables in Streamlit
 
 # API Key (Replace with your actual API key)
 YOUTUBE_API_KEY = "AIzaSyBoDd0TbpH0-NehCVi_QHc4p_lKmjCeIyY"
 
-# Function to extract video ID from URL
-def extract_video_id(url):
-    if "youtu.be" in url:
-        return url.split("/")[-1]
-    elif "youtube.com/watch?v=" in url:
-        return url.split("v=")[1].split("&")[0]
-    return None
+# Initialize YouTube API
+def get_youtube_service():
+    return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# Function to fetch video details
-def get_video_data(video_id):
-    youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+# Function to search videos based on a keyword
+def search_videos(query, max_results=10):
+    youtube = get_youtube_service()
     
-    request = youtube.videos().list(
-        part="statistics,snippet",
-        id=video_id
+    request = youtube.search().list(
+        q=query,
+        part="snippet",
+        type="video",
+        maxResults=max_results
     )
     response = request.execute()
 
-    if "items" not in response or not response["items"]:
-        return None
+    video_list = []
+    
+    for item in response.get("items", []):
+        video_id = item["id"]["videoId"]
+        title = item["snippet"]["title"]
+        channel = item["snippet"]["channelTitle"]
 
-    video_data = response["items"][0]
-    stats = video_data["statistics"]
-    snippet = video_data["snippet"]
+        video_list.append({"video_id": video_id, "title": title, "channel": channel})
 
-    return {
-        "title": snippet["title"],
-        "views": int(stats.get("viewCount", 0)),
-        "likes": int(stats.get("likeCount", 0)),
-        "comments": int(stats.get("commentCount", 0)),
-        "channel": snippet["channelTitle"]
-    }
+    return video_list
 
-# Function to fetch comments
-def get_video_comments(video_id, max_comments=10):
-    youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+# Function to fetch video statistics
+def get_video_statistics(video_ids):
+    youtube = get_youtube_service()
+    
+    request = youtube.videos().list(
+        part="statistics",
+        id=",".join(video_ids)
+    )
+    response = request.execute()
+
+    video_stats = {}
+    
+    for item in response.get("items", []):
+        video_id = item["id"]
+        stats = item["statistics"]
+        
+        video_stats[video_id] = {
+            "views": int(stats.get("viewCount", 0)),
+            "likes": int(stats.get("likeCount", 0)),
+            "comments": int(stats.get("commentCount", 0)),
+        }
+
+    return video_stats
+
+# Function to fetch top comments
+def get_video_comments(video_id, max_comments=3):
+    youtube = get_youtube_service()
     
     request = youtube.commentThreads().list(
         part="snippet",
@@ -60,49 +78,84 @@ def get_video_comments(video_id, max_comments=10):
     
     return comments
 
-# Function to compute outlier score
-def calculate_outlier_score(view_count):
-    dataset = np.random.randint(1000, 1000000, size=100)  # Simulated dataset
-    dataset = np.append(dataset, view_count)  # Add current video views
+# Function to compute outlier scores
+def compute_outlier_scores(view_counts):
+    dataset = np.append(np.random.randint(1000, 1000000, size=100), view_counts)
     scores = zscore(dataset)
-    return round(scores[-1], 2)
+    
+    # Map scores back to the original data
+    outlier_dict = {view: round(scores[-len(view_counts) + i], 2) for i, view in enumerate(view_counts)}
+    
+    return outlier_dict
 
 # Streamlit UI
-st.title("📺 YouTube Video Data Explorer")
+st.title("🔥 YouTube Video Search & Analysis")
 
-# Input box for YouTube URL
-video_url = st.text_input("Paste YouTube Video Link:")
+# Input box for keywords
+search_query = st.text_input("Enter search keywords:")
 
-if video_url:
-    video_id = extract_video_id(video_url)
+if search_query:
+    with st.spinner("Searching for videos..."):
+        videos = search_videos(search_query)
 
-    if video_id:
-        with st.spinner("Fetching video data..."):
-            video_info = get_video_data(video_id)
+    if videos:
+        video_ids = [video["video_id"] for video in videos]
         
-        if video_info:
-            st.subheader(f"🎬 {video_info['title']}")
-            st.write(f"📺 Channel: {video_info['channel']}")
-            st.write(f"👀 Views: {video_info['views']:,}")
-            st.write(f"👍 Likes: {video_info['likes']:,}")
-            st.write(f"💬 Comments: {video_info['comments']:,}")
+        with st.spinner("Fetching video statistics..."):
+            video_stats = get_video_statistics(video_ids)
 
-            # Outlier Score Calculation
-            outlier_score = calculate_outlier_score(video_info["views"])
-            st.write(f"📊 **Outlier Score:** {outlier_score}")
+        # Merge video details with statistics
+        data = []
+        comments_data = []
+        
+        for video in videos:
+            vid_id = video["video_id"]
+            if vid_id in video_stats:
+                # Fetch comments
+                with st.spinner(f"Fetching comments for {video['title']}..."):
+                    comments = get_video_comments(vid_id)
 
-            # Fetch Comments
-            with st.spinner("Fetching comments..."):
-                comments = get_video_comments(video_id)
-            
-            if comments:
-                st.subheader("💬 Top Comments:")
-                for comment in comments:
-                    st.write(f"- {comment}")
+                # Store video data
+                data.append({
+                    "Title": video["title"],
+                    "Channel": video["channel"],
+                    "Views": video_stats[vid_id]["views"],
+                    "Likes": video_stats[vid_id]["likes"],
+                    "Comments": video_stats[vid_id]["comments"],
+                    "Video Link": f"https://www.youtube.com/watch?v={vid_id}",
+                    "Video ID": vid_id
+                })
 
+                # Store comments separately for display
+                comments_data.append({
+                    "Video ID": vid_id,
+                    "Comments": "\n".join(comments) if comments else "No comments available"
+                })
+
+        # Convert to DataFrame
+        df = pd.DataFrame(data)
+        df_comments = pd.DataFrame(comments_data)
+
+        # Compute outlier scores
+        outlier_scores = compute_outlier_scores(df["Views"].values)
+        df["Outlier Score"] = df["Views"].map(outlier_scores)
+
+        # Sorting options
+        sort_by = st.selectbox("Sort videos by:", ["Views", "Outlier Score"], index=0)
+
+        if sort_by == "Views":
+            df = df.sort_values(by="Views", ascending=False)
         else:
-            st.error("Invalid Video URL or Data Not Available")
+            df = df.sort_values(by="Outlier Score", ascending=False)
+
+        # Display video data
+        tools.display_dataframe_to_user(name="YouTube Search Results", dataframe=df)
+
+        # Display comments separately
+        st.subheader("📢 Top Comments for Each Video")
+        for _, row in df_comments.iterrows():
+            st.markdown(f"**Video:** [{row['Video ID']}](https://www.youtube.com/watch?v={row['Video ID']})")
+            st.text_area("Comments", row["Comments"], height=150)
 
     else:
-        st.error("Invalid YouTube Link")
-
+        st.error("No videos found. Try a different keyword.")
