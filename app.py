@@ -161,25 +161,16 @@ if search_query:
         else:
             df = df.sort_values(by="Outlier Score", ascending=False)
 
-        # **🎨 Display results in Gallery View**
+        # **🎨 Display results in Gallery View with Bigger Columns**
         st.subheader("📊 YouTube Search Results")
 
-        num_columns = 3  # Set the number of columns for the gallery view
-        columns = st.columns(num_columns)
+        num_columns = 2  # Reduced to 2 columns for larger display
+        column_widths = [2, 2]  # Increase column width
+        columns = st.columns(column_widths)
 
         for index, row in df.iterrows():
             col = columns[index % num_columns]  # Distribute videos across columns
             with col:
                 st.image(row["Thumbnail"], use_column_width=True)
-                st.markdown(f"**[{row['Title']}]({row['Video Link']})**")
-                st.markdown(f"📺 {row['Channel']}  |  👍 {row['Likes']}  |  👁️ {row['Views']} views")
-                
-                # Display top comments
-                st.markdown("💬 **Top Comments:**")
-                for comment in comments_data[row["Video ID"]]:
-                    st.markdown(f"➤ {comment['text']}  _(👍 {comment['likes']} likes)_")
-
-                st.markdown("---")  # Divider for readability
-
-    else:
-        st.error("No videos found. Try a different keyword.")
+                st.markdown(f"### [{row['Title']}]({row['Video Link']})")
+                st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** view
