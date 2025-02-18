@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import zscore
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 # API Key (Replace with your actual API key)
 YOUTUBE_API_KEY = "AIzaSyBoDd0TbpH0-NehCVi_QHc4p_lKmjCeIyY"
@@ -58,23 +59,36 @@ def get_video_statistics(video_ids):
 
     return video_stats
 
-# Function to fetch top comments
+# Function to fetch top comments with error handling
 def get_video_comments(video_id, max_comments=3):
     youtube = get_youtube_service()
     
-    request = youtube.commentThreads().list(
-        part="snippet",
-        videoId=video_id,
-        maxResults=max_comments,
-        textFormat="plainText"
-    )
-    response = request.execute()
+    try:
+        request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=max_comments,
+            textFormat="plainText"
+        )
+        response = request.execute()
 
-    comments = []
-    for item in response.get("items", []):
-        comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
-        comments.append(comment)
+        comments = []
+        for item in response.get("items", []):
+            comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+            comments.append(comment)
+        
+        # Return comments or a message if there are no comments
+        return comments if comments else ["No comments available for this video."]
     
+    except HttpError as e:
+        error_message = e.content.decode("utf-8")
+        if "disabled comments" in error_message.lower():
+            return ["Comments are disabled for this video."]
+        elif "quotaExceeded" in error_message.lower():
+            return ["YouTube API quota exceeded. Try again later."]
+        else:
+            return [f"Failed to fetch comments: {error_message}"]
+
     return comments
 
 # Function to compute outlier scores
