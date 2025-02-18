@@ -30,8 +30,9 @@ def search_videos(query, max_results=10):
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
         channel = item["snippet"]["channelTitle"]
+        thumbnail = item["snippet"]["thumbnails"]["high"]["url"]  # Get high-resolution thumbnail
 
-        video_list.append({"video_id": video_id, "title": title, "channel": channel})
+        video_list.append({"video_id": video_id, "title": title, "channel": channel, "thumbnail": thumbnail})
 
     return video_list
 
@@ -58,38 +59,6 @@ def get_video_statistics(video_ids):
         }
 
     return video_stats
-
-# Function to fetch top comments with error handling
-def get_video_comments(video_id, max_comments=3):
-    youtube = get_youtube_service()
-    
-    try:
-        request = youtube.commentThreads().list(
-            part="snippet",
-            videoId=video_id,
-            maxResults=max_comments,
-            textFormat="plainText"
-        )
-        response = request.execute()
-
-        comments = []
-        for item in response.get("items", []):
-            comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
-            comments.append(comment)
-        
-        # Return comments or a message if there are no comments
-        return comments if comments else ["No comments available for this video."]
-    
-    except HttpError as e:
-        error_message = e.content.decode("utf-8")
-        if "disabled comments" in error_message.lower():
-            return ["Comments are disabled for this video."]
-        elif "quotaExceeded" in error_message.lower():
-            return ["YouTube API quota exceeded. Try again later."]
-        else:
-            return [f"Failed to fetch comments: {error_message}"]
-
-    return comments
 
 # Function to compute outlier scores
 def compute_outlier_scores(view_counts):
@@ -119,35 +88,22 @@ if search_query:
 
         # Merge video details with statistics
         data = []
-        comments_data = []
         
         for video in videos:
             vid_id = video["video_id"]
             if vid_id in video_stats:
-                # Fetch comments
-                with st.spinner(f"Fetching comments for {video['title']}..."):
-                    comments = get_video_comments(vid_id)
-
-                # Store video data
                 data.append({
                     "Title": video["title"],
                     "Channel": video["channel"],
                     "Views": video_stats[vid_id]["views"],
                     "Likes": video_stats[vid_id]["likes"],
-                    "Comments": video_stats[vid_id]["comments"],
                     "Video Link": f"https://www.youtube.com/watch?v={vid_id}",
-                    "Video ID": vid_id
-                })
-
-                # Store comments separately for display
-                comments_data.append({
                     "Video ID": vid_id,
-                    "Comments": "\n".join(comments) if comments else "No comments available"
+                    "Thumbnail": video["thumbnail"]  # Store thumbnail
                 })
 
         # Convert to DataFrame
         df = pd.DataFrame(data)
-        df_comments = pd.DataFrame(comments_data)
 
         # Compute outlier scores
         outlier_scores = compute_outlier_scores(df["Views"].values)
@@ -161,15 +117,19 @@ if search_query:
         else:
             df = df.sort_values(by="Outlier Score", ascending=False)
 
-        # Display video data in Streamlit
+        # **🎨 Display results in Gallery View**
         st.subheader("📊 YouTube Search Results")
-        st.dataframe(df)
 
-        # Display comments separately
-        st.subheader("📢 Top Comments for Each Video")
-        for _, row in df_comments.iterrows():
-            st.markdown(f"**Video:** [{row['Video ID']}](https://www.youtube.com/watch?v={row['Video ID']})")
-            st.text_area("Comments", row["Comments"], height=150, key=row["Video ID"])
+        num_columns = 3  # Set the number of columns for the gallery view
+        columns = st.columns(num_columns)
+
+        for index, row in df.iterrows():
+            col = columns[index % num_columns]  # Distribute videos across columns
+            with col:
+                st.image(row["Thumbnail"], use_column_width=True)
+                st.markdown(f"**[{row['Title']}]({row['Video Link']})**")
+                st.markdown(f"📺 {row['Channel']}  |  👍 {row['Likes']}  |  👁️ {row['Views']} views")
+                st.markdown("---")  # Divider for readability
 
     else:
         st.error("No videos found. Try a different keyword.")
