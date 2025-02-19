@@ -173,4 +173,6 @@ if search_query:
             with col:
                 st.image(row["Thumbnail"], use_column_width=True)
                 st.markdown(f"### [{row['Title']}]({row['Video Link']})")
-                st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** view
+                st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
+
+
