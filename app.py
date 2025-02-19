@@ -183,8 +183,8 @@ if search_query:
                 st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
         
         # Display Top Comments
-         st.markdown("#### 🗨️ Top Comments:")
-         comments = comments_data.get(row["Video ID"], [])
-         for comment in comments:
-            st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
+                st.markdown("#### 🗨️ Top Comments:")
+                comments = comments_data.get(row["Video ID"], [])
+                for comment in comments:
+                    st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
 
