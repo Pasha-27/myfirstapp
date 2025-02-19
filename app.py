@@ -74,24 +74,31 @@ def get_top_comments(video_id, max_comments=50):
         )
         response = request.execute()
 
-        comments = []
-        for item in response.get("items", []):
-            snippet = item["snippet"]["topLevelComment"]["snippet"]
-            comment_text = snippet["textDisplay"]
-            likes = snippet.get("likeCount", 0)  # Get like count
-            comments.append({"text": comment_text, "likes": likes})
+        if "items" not in response:
+            return [{"text": "No comments available.", "likes": 0}]
         
-        # Sort comments by likes (descending order) and take top 10
+        comments = []
+        for item in response["items"]:
+            snippet = item["snippet"]["topLevelComment"]["snippet"]
+            comment_text = snippet.get("textDisplay", "No comment text")
+            likes = snippet.get("likeCount", 0)  # Get like count safely
+            
+            comments.append({"text": comment_text, "likes": likes})
+
+        # Sort comments by likes in descending order and take top 10
         top_comments = sorted(comments, key=lambda x: x["likes"], reverse=True)[:10]
 
-        return top_comments if top_comments else [{"text": "No comments available.", "likes": 0}]
+        return top_comments if top_comments else [{"text": "No top comments available.", "likes": 0}]
     
     except HttpError as e:
-        error_message = e.content.decode("utf-8")
-        if "disabled comments" in error_message.lower():
+        error_message = e.content.decode("utf-8").lower()
+        
+        if "disabled comments" in error_message:
             return [{"text": "Comments are disabled for this video.", "likes": 0}]
-        elif "quotaExceeded" in error_message.lower():
+        elif "quotaexceeded" in error_message:
             return [{"text": "YouTube API quota exceeded. Try again later.", "likes": 0}]
+        elif "notfound" in error_message:
+            return [{"text": "Video not found or removed.", "likes": 0}]
         else:
             return [{"text": f"Failed to fetch comments: {error_message}", "likes": 0}]
 
@@ -174,5 +181,18 @@ if search_query:
                 st.image(row["Thumbnail"], use_column_width=True)
                 st.markdown(f"### [{row['Title']}]({row['Video Link']})")
                 st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
+        
+        # Display Top Comments
+        st.markdown("#### 🗨️ Top Comments:")
+        comments = comments_data.get(row["Video ID"], [])
+        for comment in comments:
+            st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*")
+
+        #for index, row in df.iterrows():
+         #   col = columns[index % num_columns]  # Distribute videos across columns
+          #  with col:
+           #     st.image(row["Thumbnail"], use_column_width=True)
+            #    st.markdown(f"### [{row['Title']}]({row['Video Link']})")
+             #   st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")**
 
 
