@@ -175,24 +175,16 @@ if search_query:
         column_widths = [2, 2]  # Increase column width
         columns = st.columns(column_widths)
 
-        for index, row in df.iterrows():
-            col = columns[index % num_columns]  # Distribute videos across columns
-            with col:
-                st.image(row["Thumbnail"], use_column_width=True)
-                st.markdown(f"### [{row['Title']}]({row['Video Link']})")
-                st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
+       for index, row in df.iterrows():
+        col = columns[index % num_columns]  # Distribute videos across columns
+        with col:
+        st.image(row["Thumbnail"], use_container_width=True)  # ✅ Updated here
+        st.markdown(f"### [{row['Title']}]({row['Video Link']})")
+        st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
         
         # Display Top Comments
         st.markdown("#### 🗨️ Top Comments:")
         comments = comments_data.get(row["Video ID"], [])
         for comment in comments:
-            st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*")
-
-        #for index, row in df.iterrows():
-         #   col = columns[index % num_columns]  # Distribute videos across columns
-          #  with col:
-           #     st.image(row["Thumbnail"], use_column_width=True)
-            #    st.markdown(f"### [{row['Title']}]({row['Video Link']})")
-             #   st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")**
-
+            st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
 
