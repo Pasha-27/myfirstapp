@@ -154,7 +154,7 @@ if search_query:
         with st.spinner("Fetching video statistics..."):
             video_stats = get_video_statistics(video_ids)
 
-        for video in videos:
+    for video in videos:
         vid_id = video["video_id"]
         if vid_id in video_stats:
             comments = get_top_comments(vid_id)
