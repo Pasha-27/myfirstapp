@@ -7,22 +7,18 @@ from googleapiclient.errors import HttpError
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import openai
 
-# OpenAI API Key (Replace with your actual key)
-#openai.api_key = OPENAI_API_KEY
-#client = openai.api_key
-#client = OpenAI(api_key=OPENAI_API_KEY)
+# OpenAI API Key (Loaded securely)
 OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
 YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 
+# Initialize OpenAI Client
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
-#client = openai.Client(api_key=OPENAI_API_KEY)
-
 
 # Initialize YouTube API
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# Function to search videos based on a keyword
+# Function to search videos
 def search_videos(query, max_results=10):
     youtube = get_youtube_service()
     request = youtube.search().list(
@@ -103,26 +99,32 @@ def analyze_patterns(transcript, comments):
         return "Transcript not available for analysis."
     
     comments_text = "\n".join([comment["text"] for comment in comments])
-    
-    prompt = f"""
-    Analyze the following video transcript and its comments. Identify common themes, recurring phrases, emotions, and engagement patterns.
 
-    Transcript:
+    # Limit the length to avoid API issues
+    transcript = transcript[:9000]  # First 9000 characters
+    comments_text = comments_text[:2000]  # First 2000 characters
+
+    prompt = f"""
+    Compare the following video transcript with its comments. Identify common themes, recurring phrases, emotions, and engagement patterns.
+
+    Transcript (truncated):
     {transcript}
 
-    Comments:
+    Comments (truncated):
     {comments_text}
 
-    Provide a concise summary highlighting common topics, sentiments, and any unique insights.
+    Provide a summary of common topics, user sentiment, and any unique insights.
     """
 
-    # Use the new OpenAI API format
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
 
-    return response.choices[0].message.content
+    except openai.OpenAIError as e:
+        return f"⚠️ OpenAI API Error: {str(e)}"
 
 # Streamlit UI
 st.title("🔥 YouTube Video Search & Analysis")
@@ -139,73 +141,36 @@ if search_query:
         with st.spinner("Fetching video statistics..."):
             video_stats = get_video_statistics(video_ids)
 
-        data = []
-        comments_data = {}
-        transcripts_data = {}
-
         for video in videos:
             vid_id = video["video_id"]
             if vid_id in video_stats:
-                with st.spinner(f"Fetching comments for {video['title']}..."):
-                    comments = get_top_comments(vid_id)
+                comments = get_top_comments(vid_id)
+                transcript = get_transcript(vid_id)
 
-                with st.spinner(f"Fetching transcript for {video['title']}..."):
-                    transcript = get_transcript(vid_id)
-                    transcripts_data[vid_id] = transcript
-
-                data.append({
-                    "Title": video["title"],
-                    "Channel": video["channel"],
-                    "Views": video_stats[vid_id]["views"],
-                    "Likes": video_stats[vid_id]["likes"],
-                    "Video Link": f"https://www.youtube.com/watch?v={vid_id}",
-                    "Video ID": vid_id,
-                    "Thumbnail": video["thumbnail"]
-                })
-
-                comments_data[vid_id] = comments
-
-        df = pd.DataFrame(data)
-
-        st.subheader("📊 YouTube Search Results")
-        num_columns = 2
-        columns = st.columns(num_columns)
-
-        for index, row in df.iterrows():
-            col = columns[index % num_columns]
-            with col:
-                st.image(row["Thumbnail"], use_container_width=True)
-                st.markdown(f"### [{row['Title']}]({row['Video Link']})")
-                st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
+                st.image(video["thumbnail"], use_container_width=True)
+                st.markdown(f"### [{video['title']}]({video['video_id']})")
+                st.markdown(f"📺 **{video['channel']}**  |  👍 **{video_stats[vid_id]['likes']}**  |  👁️ **{video_stats[vid_id]['views']}** views")
 
                 st.markdown("#### 🗨️ Top Comments:")
-                comments = comments_data.get(row["Video ID"], [])
                 for comment in comments:
                     st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
 
-                # **Download Transcript**
-                transcript_text = transcripts_data.get(row["Video ID"], "Transcript not available")
-                transcript_filename = f"{row['Title'].replace(' ', '_')}_transcript.txt"
-
-                if transcript_text != "Transcript is not available for this video.":
-                    transcript_bytes = transcript_text.encode("utf-8")
+                if transcript != "Transcript is not available for this video.":
                     st.download_button(
                         label="📥 Download Transcript",
-                        data=transcript_bytes,
-                        file_name=transcript_filename,
+                        data=transcript.encode("utf-8"),
+                        file_name=f"{video['title']}_transcript.txt",
                         mime="text/plain"
                     )
 
-                    # **Analyze Patterns Button**
-                    if st.button(f"🧠 Analyze Patterns ({row['Title']})"):
+                    if st.button(f"🧠 Analyze Patterns", key=vid_id):
                         with st.spinner("Analyzing patterns..."):
-                            analysis_result = analyze_patterns(transcript_text, comments)
-                            analysis_filename = f"{row['Title'].replace(' ', '_')}_patterns.txt"
-                            analysis_bytes = analysis_result.encode("utf-8")
+                            analysis_result = analyze_patterns(transcript, comments)
+                            analysis_filename = f"{video['title']}_patterns.txt"
 
                             st.download_button(
                                 label="📥 Download Analysis",
-                                data=analysis_bytes,
+                                data=analysis_result.encode("utf-8"),
                                 file_name=analysis_filename,
                                 mime="text/plain"
                             )
