@@ -14,13 +14,11 @@ YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 # Initialize OpenAI Client
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-view_counts = [video_stats[vid_id]["views"] for vid_id in video_ids]
-outlier_scores = compute_outlier_scores(view_counts)
-
 # Initialize YouTube API
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
+# Function to compute outlier scores
 def compute_outlier_scores(view_counts):
     """Computes Z-score based outlier scores for views."""
     if len(view_counts) < 2:
@@ -154,42 +152,44 @@ if search_query:
         with st.spinner("Fetching video statistics..."):
             video_stats = get_video_statistics(video_ids)
 
-    for video in videos:
-        vid_id = video["video_id"]
-        if vid_id in video_stats:
-            comments = get_top_comments(vid_id)
-            transcript = get_transcript(vid_id)
+        # Compute outlier scores **after fetching statistics**
+        view_counts = [video_stats[vid_id]["views"] for vid_id in video_ids]
+        outlier_scores = compute_outlier_scores(view_counts)
 
-            st.image(video["thumbnail"], use_container_width=True)
-            st.markdown(f"### [{video['title']}]({video['video_id']})")
-            st.markdown(f"📺 **{video['channel']}**  |  👍 **{video_stats[vid_id]['likes']}**  |  👁️ **{video_stats[vid_id]['views']}** views")
+        for video in videos:
+            vid_id = video["video_id"]
+            if vid_id in video_stats:
+                comments = get_top_comments(vid_id)
+                transcript = get_transcript(vid_id)
 
-        # Display Outlier Score
-            outlier_score = outlier_scores.get(video_stats[vid_id]["views"], 0)
-            st.markdown(f"🔍 **Outlier Score:** `{outlier_score}`")
+                st.image(video["thumbnail"], use_container_width=True)
+                st.markdown(f"### [{video['title']}]({video['video_id']})")
+                st.markdown(f"📺 **{video['channel']}**  |  👍 **{video_stats[vid_id]['likes']}**  |  👁️ **{video_stats[vid_id]['views']}** views")
 
-            st.markdown("#### 🗨️ Top Comments:")
-            for comment in comments:
-                st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
+                # Display Outlier Score
+                outlier_score = outlier_scores.get(video_stats[vid_id]["views"], 0)
+                st.markdown(f"🔍 **Outlier Score:** `{outlier_score}`")
 
-            if transcript != "Transcript is not available for this video.":
-                st.download_button(
-                    label="📥 Download Transcript",
-                    data=transcript.encode("utf-8"),
-                    file_name=f"{video['title']}_transcript.txt",
-                    mime="text/plain"
-            )
+                st.markdown("#### 🗨️ Top Comments:")
+                for comment in comments:
+                    st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
 
-                if st.button(f"🧠 Analyze Patterns", key=vid_id):
-                    with st.spinner("Analyzing patterns..."):
-                        analysis_result = analyze_patterns(transcript, comments)
-                        analysis_filename = f"{video['title']}_patterns.txt"
+                if transcript != "Transcript is not available for this video.":
+                    st.download_button(
+                        label="📥 Download Transcript",
+                        data=transcript.encode("utf-8"),
+                        file_name=f"{video['title']}_transcript.txt",
+                        mime="text/plain"
+                    )
 
-                        st.download_button(
-                            label="📥 Download Analysis",
-                            data=analysis_result.encode("utf-8"),
-                            file_name=analysis_filename,
-                            mime="text/plain"
-                        )
-            else:
-                st.markdown("⚠️ **Transcript not available for this video.**")
+                    if st.button(f"🧠 Analyze Patterns", key=vid_id):
+                        with st.spinner("Analyzing patterns..."):
+                            analysis_result = analyze_patterns(transcript, comments)
+                            st.download_button(
+                                label="📥 Download Analysis",
+                                data=analysis_result.encode("utf-8"),
+                                file_name=f"{video['title']}_patterns.txt",
+                                mime="text/plain"
+                            )
+                else:
+                    st.markdown("⚠️ **Transcript not available for this video.**")
