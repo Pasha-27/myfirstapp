@@ -8,10 +8,11 @@ from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, No
 import openai
 
 # OpenAI API Key (Replace with your actual key)
-OPENAI_API_KEY = "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"
-openai.api_key = OPENAI_API_KEY
+#OPENAI_API_KEY = "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"
+#openai.api_key = OPENAI_API_KEY
 #client = openai.api_key
 #client = OpenAI(api_key=OPENAI_API_KEY)
+client = openai.OpenAI(api_key="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")
 
 
 # YouTube API Key (Replace with your actual API key)
@@ -115,12 +116,13 @@ def analyze_patterns(transcript, comments):
     Provide a concise summary highlighting common topics, sentiments, and any unique insights.
     """
 
-    response = openai.ChatCompletion.create(  # Correct function usage
+    # Use the new OpenAI API format
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[{"role": "user", "content": prompt}]
     )
 
-    return response["choices"][0]["message"]["content"]
+    return response.choices[0].message.content
 
 # Streamlit UI
 st.title("🔥 YouTube Video Search & Analysis")
