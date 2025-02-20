@@ -3,4 +3,3 @@ google-api-python-client
 pandas
 numpy
 scipy
-YouTubeTranscriptApi
