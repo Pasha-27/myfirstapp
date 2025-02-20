@@ -9,8 +9,9 @@ import openai
 
 # OpenAI API Key (Replace with your actual key)
 OPENAI_API_KEY = "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"
-#openai.api_key = OPENAI_API_KEY
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
+client = openai.api_key
+#client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 # YouTube API Key (Replace with your actual API key)
