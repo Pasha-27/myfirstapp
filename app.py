@@ -4,6 +4,8 @@ import pandas as pd
 from scipy.stats import zscore
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import json
 
 # API Key (Replace with your actual API key)
 YOUTUBE_API_KEY = "AIzaSyBoDd0TbpH0-NehCVi_QHc4p_lKmjCeIyY"
@@ -30,7 +32,7 @@ def search_videos(query, max_results=10):
         video_id = item["id"]["videoId"]
         title = item["snippet"]["title"]
         channel = item["snippet"]["channelTitle"]
-        thumbnail = item["snippet"]["thumbnails"]["high"]["url"]  # High-res thumbnail
+        thumbnail = item["snippet"]["thumbnails"]["high"]["url"]
 
         video_list.append({"video_id": video_id, "title": title, "channel": channel, "thumbnail": thumbnail})
 
@@ -60,7 +62,16 @@ def get_video_statistics(video_ids):
 
     return video_stats
 
-# Function to fetch top 10 comments based on likes
+# Function to fetch transcript using youtube-transcript-api
+def get_transcript(video_id):
+    try:
+        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript_text = "\n".join([entry["text"] for entry in transcript])
+        return transcript_text
+    except (TranscriptsDisabled, NoTranscriptFound):
+        return "Transcript is not available for this video."
+
+# Function to fetch top 10 comments
 def get_top_comments(video_id, max_comments=50):
     youtube = get_youtube_service()
     
@@ -70,7 +81,7 @@ def get_top_comments(video_id, max_comments=50):
             videoId=video_id,
             maxResults=max_comments,
             textFormat="plainText",
-            order="relevance"  # Fetch relevant comments
+            order="relevance"
         )
         response = request.execute()
 
@@ -81,13 +92,11 @@ def get_top_comments(video_id, max_comments=50):
         for item in response["items"]:
             snippet = item["snippet"]["topLevelComment"]["snippet"]
             comment_text = snippet.get("textDisplay", "No comment text")
-            likes = snippet.get("likeCount", 0)  # Get like count safely
+            likes = snippet.get("likeCount", 0)
             
             comments.append({"text": comment_text, "likes": likes})
 
-        # Sort comments by likes in descending order and take top 10
         top_comments = sorted(comments, key=lambda x: x["likes"], reverse=True)[:10]
-
         return top_comments if top_comments else [{"text": "No top comments available.", "likes": 0}]
     
     except HttpError as e:
@@ -107,7 +116,6 @@ def compute_outlier_scores(view_counts):
     dataset = np.append(np.random.randint(1000, 1000000, size=100), view_counts)
     scores = zscore(dataset)
     
-    # Map scores back to the original data
     outlier_dict = {view: round(scores[-len(view_counts) + i], 2) for i, view in enumerate(view_counts)}
     
     return outlier_dict
@@ -115,7 +123,6 @@ def compute_outlier_scores(view_counts):
 # Streamlit UI
 st.title("🔥 YouTube Video Search & Analysis")
 
-# Input box for keywords
 search_query = st.text_input("Enter search keywords:")
 
 if search_query:
@@ -128,18 +135,20 @@ if search_query:
         with st.spinner("Fetching video statistics..."):
             video_stats = get_video_statistics(video_ids)
 
-        # Merge video details with statistics
         data = []
         comments_data = {}
-        
+        transcripts_data = {}
+
         for video in videos:
             vid_id = video["video_id"]
             if vid_id in video_stats:
-                # Fetch top 10 comments
                 with st.spinner(f"Fetching comments for {video['title']}..."):
                     comments = get_top_comments(vid_id)
 
-                # Store video data
+                with st.spinner(f"Fetching transcript for {video['title']}..."):
+                    transcript = get_transcript(vid_id)
+                    transcripts_data[vid_id] = transcript
+
                 data.append({
                     "Title": video["title"],
                     "Channel": video["channel"],
@@ -150,17 +159,13 @@ if search_query:
                     "Thumbnail": video["thumbnail"]
                 })
 
-                # Store top comments
                 comments_data[vid_id] = comments
 
-        # Convert to DataFrame
         df = pd.DataFrame(data)
 
-        # Compute outlier scores
         outlier_scores = compute_outlier_scores(df["Views"].values)
         df["Outlier Score"] = df["Views"].map(outlier_scores)
 
-        # Sorting options
         sort_by = st.selectbox("Sort videos by:", ["Views", "Outlier Score"], index=0)
 
         if sort_by == "Views":
@@ -168,23 +173,34 @@ if search_query:
         else:
             df = df.sort_values(by="Outlier Score", ascending=False)
 
-        # **🎨 Display results in Gallery View with Bigger Columns**
         st.subheader("📊 YouTube Search Results")
 
-        num_columns = 2  # Reduced to 2 columns for larger display
-        column_widths = [2, 2]  # Increase column width
-        columns = st.columns(column_widths)
+        num_columns = 2
+        columns = st.columns(num_columns)
 
         for index, row in df.iterrows():
-            col = columns[index % num_columns]  # Distribute videos across columns
+            col = columns[index % num_columns]
             with col:
-                st.image(row["Thumbnail"], use_container_width=True)  # ✅ Updated here
+                st.image(row["Thumbnail"], use_container_width=True)
                 st.markdown(f"### [{row['Title']}]({row['Video Link']})")
                 st.markdown(f"📺 **{row['Channel']}**  |  👍 **{row['Likes']}**  |  👁️ **{row['Views']}** views")
         
-        # Display Top Comments
                 st.markdown("#### 🗨️ Top Comments:")
                 comments = comments_data.get(row["Video ID"], [])
                 for comment in comments:
                     st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
 
+                # **Download Transcript**
+                transcript_text = transcripts_data.get(row["Video ID"], "Transcript not available")
+                transcript_filename = f"{row['Title'].replace(' ', '_')}_transcript.txt"
+
+                if transcript_text and transcript_text != "Transcript is not available for this video.":
+                    transcript_bytes = transcript_text.encode("utf-8")
+                    st.download_button(
+                        label="📥 Download Transcript",
+                        data=transcript_bytes,
+                        file_name=transcript_filename,
+                        mime="text/plain"
+                    )
+                else:
+                    st.markdown("⚠️ **Transcript not available for this video.**")
