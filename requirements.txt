@@ -5,4 +5,3 @@ numpy
 scipy
 youtube-transcript-api
 openai
-datatime
