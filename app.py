@@ -24,51 +24,63 @@ def get_channel_videos(channel_id, days, max_results=50):
     youtube = get_youtube_service()
     search_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat("T") + "Z"
     
-    request = youtube.search().list(
-        part="id,snippet",
-        channelId=channel_id,
-        publishedAfter=search_date,
-        maxResults=max_results,
-        type="video",
-        order="date"
-    )
-    
     try:
+        request = youtube.search().list(
+            part="id,snippet",
+            channelId=channel_id,
+            publishedAfter=search_date,
+            maxResults=max_results,
+            type="video",
+            order="date"
+        )
         response = request.execute()
+        
         videos = []
         for item in response.get("items", []):
-            videos.append({
-                "video_id": item["id"]["videoId"],
-                "title": item["snippet"]["title"],
-                "thumbnail": item["snippet"]["thumbnails"]["high"]["url"],
-                "published_date": item["snippet"]["publishedAt"]
-            })
+            if "videoId" in item["id"]:  # Ensure valid video ID
+                videos.append({
+                    "video_id": item["id"]["videoId"],
+                    "title": item["snippet"]["title"],
+                    "thumbnail": item["snippet"]["thumbnails"]["high"]["url"],
+                    "published_date": item["snippet"]["publishedAt"]
+                })
         return videos
+    
     except HttpError as e:
         st.error(f"API Error: {e}")
         return []
 
-# Fetch video statistics
+# Fetch video statistics (Fixed for API request error)
 def get_video_statistics(video_ids):
     youtube = get_youtube_service()
-    request = youtube.videos().list(
-        part="statistics",
-        id=",".join(video_ids)
-    )
     
-    try:
-        response = request.execute()
-        stats = {}
-        for item in response.get("items", []):
-            stats[item["id"]] = {
-                "views": int(item["statistics"].get("viewCount", 0)),
-                "likes": int(item["statistics"].get("likeCount", 0)),
-                "comments": int(item["statistics"].get("commentCount", 0)),
-            }
-        return stats
-    except HttpError as e:
-        st.error(f"API Error: {e}")
+    if not video_ids:  # Ensure we have valid video IDs before making requests
         return {}
+
+    video_stats = {}
+
+    # Split into chunks (YouTube API allows max 50 video IDs per request)
+    for i in range(0, len(video_ids), 50):
+        chunk = video_ids[i:i + 50]
+        
+        try:
+            request = youtube.videos().list(
+                part="statistics",
+                id=",".join(chunk)  # Ensure valid comma-separated IDs
+            )
+            response = request.execute()
+            
+            for item in response.get("items", []):
+                video_stats[item["id"]] = {
+                    "views": int(item["statistics"].get("viewCount", 0)),
+                    "likes": int(item["statistics"].get("likeCount", 0)),
+                    "comments": int(item["statistics"].get("commentCount", 0)),
+                }
+        
+        except HttpError as e:
+            st.error(f"API Error: {e}")
+
+    return video_stats
 
 # Compute outlier scores using Modified Z-Score
 def compute_outlier_scores(view_counts):
@@ -119,7 +131,7 @@ if st.button("Find Outliers"):
     if keyword:
         all_videos = [video for video in all_videos if keyword.lower() in video["title"].lower()]
 
-    video_ids = [video["video_id"] for video in all_videos]
+    video_ids = [video["video_id"] for video in all_videos if video["video_id"]]
 
     with st.spinner("Fetching video statistics..."):
         video_stats = get_video_statistics(video_ids)
@@ -161,4 +173,3 @@ if st.button("Find Outliers"):
     # Display Data
     st.write("### 📊 Outlier Videos in Selected Niche")
     st.dataframe(df[["Title", "Views", "Outlier Score", "View-to-Like Ratio", "View-to-Comment Ratio", "Video Link"]])
-
