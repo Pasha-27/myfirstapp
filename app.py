@@ -84,18 +84,26 @@ def get_video_statistics(video_ids):
 
 # Compute outlier scores using Modified Z-Score
 def compute_outlier_scores(view_counts):
-    if len(view_counts) < 2:
+    """Computes outlier scores for videos based on view counts using the Modified Z-score method."""
+    
+    if not view_counts:  # Handle case where there are no views
+        return {}
+
+    view_list = list(view_counts.values())  # Convert dictionary values to a list
+
+    if len(view_list) < 2:
         return {vid: 0 for vid in view_counts}  # Avoid division by zero
-    
-    median_views = np.median(view_counts)
-    mad = median_abs_deviation(view_counts)
-    
-    if mad == 0:
-        return {vid: 0 for vid in view_counts}  # Prevent division by zero
-    
-    scores = [0.6745 * (view - median_views) / mad for view in view_counts]
-    
-    return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_counts))}
+
+    median_views = np.median(view_list)
+    mad = median_abs_deviation(view_list)
+
+    if mad == 0:  # Prevent division by zero
+        return {vid: 0 for vid in view_counts}
+
+    scores = [0.6745 * (view - median_views) / mad for view in view_list]
+
+    return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_list))}
+
 
 # Streamlit UI
 st.title("🎥 YouTube Outlier Video Detector")
