@@ -1,195 +1,164 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
-from scipy.stats import zscore
+import numpy as np
+import json
+import datetime
+from scipy.stats import median_abs_deviation
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
-import openai
 
-# OpenAI API Key (Loaded securely)
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+# Load API Keys from Streamlit Secrets
 YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
-
-# Initialize OpenAI Client
-client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize YouTube API
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# Function to compute outlier scores
-def compute_outlier_scores(view_counts):
-    """Computes Z-score based outlier scores for views."""
-    if len(view_counts) < 2:
-        return {view: 0 for view in view_counts}  # Avoid division by zero if only one video
+# Load Niche Channels
+def load_niche_channels():
+    with open("channels.json", "r") as f:
+        return json.load(f)
 
-    scores = zscore(view_counts)  # Compute Z-scores
-    outlier_dict = {view_counts[i]: round(scores[i], 2) for i in range(len(view_counts))}
-
-    return outlier_dict
-
-# Function to search videos
-def search_videos(query, max_results=10):
+# Fetch videos from a channel within a given timeframe
+def get_channel_videos(channel_id, days, max_results=50):
     youtube = get_youtube_service()
-    request = youtube.search().list(
-        q=query, part="snippet", type="video", maxResults=max_results
-    )
-    response = request.execute()
+    search_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat("T") + "Z"
     
-    return [
-        {"video_id": item["id"]["videoId"], 
-         "title": item["snippet"]["title"], 
-         "channel": item["snippet"]["channelTitle"], 
-         "thumbnail": item["snippet"]["thumbnails"]["high"]["url"]}
-        for item in response.get("items", [])
-    ]
+    request = youtube.search().list(
+        part="id,snippet",
+        channelId=channel_id,
+        publishedAfter=search_date,
+        maxResults=max_results,
+        type="video",
+        order="date"
+    )
+    
+    try:
+        response = request.execute()
+        videos = []
+        for item in response.get("items", []):
+            videos.append({
+                "video_id": item["id"]["videoId"],
+                "title": item["snippet"]["title"],
+                "thumbnail": item["snippet"]["thumbnails"]["high"]["url"],
+                "published_date": item["snippet"]["publishedAt"]
+            })
+        return videos
+    except HttpError as e:
+        st.error(f"API Error: {e}")
+        return []
 
-# Function to fetch video statistics
+# Fetch video statistics
 def get_video_statistics(video_ids):
     youtube = get_youtube_service()
     request = youtube.videos().list(
-        part="statistics", id=",".join(video_ids)
+        part="statistics",
+        id=",".join(video_ids)
     )
-    response = request.execute()
-
-    return {
-        item["id"]: {
-            "views": int(item["statistics"].get("viewCount", 0)),
-            "likes": int(item["statistics"].get("likeCount", 0)),
-            "comments": int(item["statistics"].get("commentCount", 0)),
-        }
-        for item in response.get("items", [])
-    }
-
-# Function to fetch transcript
-def get_transcript(video_id):
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
-        return "\n".join([entry["text"] for entry in transcript])
-    except (TranscriptsDisabled, NoTranscriptFound):
-        return "Transcript is not available for this video."
-
-# Function to fetch top 10 comments
-def get_top_comments(video_id, max_comments=50):
-    youtube = get_youtube_service()
     
     try:
-        request = youtube.commentThreads().list(
-            part="snippet", videoId=video_id, maxResults=max_comments, 
-            textFormat="plainText", order="relevance"
-        )
         response = request.execute()
-
-        if "items" not in response:
-            return [{"text": "No comments available.", "likes": 0}]
-        
-        comments = [
-            {"text": item["snippet"]["topLevelComment"]["snippet"].get("textDisplay", "No comment text"),
-             "likes": item["snippet"]["topLevelComment"]["snippet"].get("likeCount", 0)}
-            for item in response["items"]
-        ]
-        
-        return sorted(comments, key=lambda x: x["likes"], reverse=True)[:10]
-    
+        stats = {}
+        for item in response.get("items", []):
+            stats[item["id"]] = {
+                "views": int(item["statistics"].get("viewCount", 0)),
+                "likes": int(item["statistics"].get("likeCount", 0)),
+                "comments": int(item["statistics"].get("commentCount", 0)),
+            }
+        return stats
     except HttpError as e:
-        error_message = e.content.decode("utf-8").lower()
-        if "disabled comments" in error_message:
-            return [{"text": "Comments are disabled for this video.", "likes": 0}]
-        elif "quotaexceeded" in error_message:
-            return [{"text": "YouTube API quota exceeded. Try again later.", "likes": 0}]
-        elif "notfound" in error_message:
-            return [{"text": "Video not found or removed.", "likes": 0}]
-        else:
-            return [{"text": f"Failed to fetch comments: {error_message}", "likes": 0}]
+        st.error(f"API Error: {e}")
+        return {}
 
-# Function to analyze common patterns using ChatGPT
-def analyze_patterns(transcript, comments):
-    """Sends transcript and comments to ChatGPT for pattern detection."""
-    if transcript == "Transcript is not available for this video.":
-        return "Transcript not available for analysis."
+# Compute outlier scores using Modified Z-Score
+def compute_outlier_scores(view_counts):
+    if len(view_counts) < 2:
+        return {vid: 0 for vid in view_counts}  # Avoid division by zero
     
-    comments_text = "\n".join([comment["text"] for comment in comments])
-
-    # Limit the length to avoid API issues
-    transcript = transcript[:9000]  # First 9000 characters
-    comments_text = comments_text[:2000]  # First 2000 characters
-
-    prompt = f"""
-    Compare the following video transcript with its comments. Identify common themes, recurring phrases, emotions, and engagement patterns.
-
-    Transcript (truncated):
-    {transcript}
-
-    Comments (truncated):
-    {comments_text}
-
-    Provide a summary of common topics, user sentiment, and any unique insights.
-    """
-
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.choices[0].message.content
-
-    except openai.OpenAIError as e:
-        return f"⚠️ OpenAI API Error: {str(e)}"
+    median_views = np.median(view_counts)
+    mad = median_abs_deviation(view_counts)
+    
+    if mad == 0:
+        return {vid: 0 for vid in view_counts}  # Prevent division by zero
+    
+    scores = [0.6745 * (view - median_views) / mad for view in view_counts]
+    
+    return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_counts))}
 
 # Streamlit UI
-st.title("🔥 YouTube Video Search & Analysis")
+st.title("🎥 YouTube Outlier Video Detector")
 
-search_query = st.text_input("Enter search keywords:")
+# Load Niche Data
+niche_data = load_niche_channels()
+niches = list(niche_data.keys())
 
-if search_query:
-    with st.spinner("Searching for videos..."):
-        videos = search_videos(search_query)
+selected_niche = st.selectbox("Select a Niche", niches)
+timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
 
-    if videos:
-        video_ids = [video["video_id"] for video in videos]
+# Convert timeframe to days
+days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
+days = days_lookup[timeframe]
 
-        with st.spinner("Fetching video statistics..."):
-            video_stats = get_video_statistics(video_ids)
+keyword = st.text_input("🔎 Enter keyword to search within the niche")
 
-        # Compute outlier scores **after fetching statistics**
-        view_counts = [video_stats[vid_id]["views"] for vid_id in video_ids]
-        outlier_scores = compute_outlier_scores(view_counts)
+if st.button("Find Outliers"):
+    with st.spinner("Fetching videos..."):
+        niche_channels = niche_data[selected_niche]
+        all_videos = []
 
-        for video in videos:
-            vid_id = video["video_id"]
-            if vid_id in video_stats:
-                comments = get_top_comments(vid_id)
-                transcript = get_transcript(vid_id)
+        # Fetch videos from all channels in the selected niche
+        for channel in niche_channels:
+            channel_videos = get_channel_videos(channel["channel_id"], days)
+            all_videos.extend(channel_videos)
 
-                st.image(video["thumbnail"], use_container_width=True)
-                st.markdown(f"### [{video['title']}]({video['video_id']})")
-                st.markdown(f"📺 **{video['channel']}**  |  👍 **{video_stats[vid_id]['likes']}**  |  👁️ **{video_stats[vid_id]['views']}** views")
+        if not all_videos:
+            st.warning("No videos found for this niche in the selected timeframe.")
+            st.stop()
 
-                # Display Outlier Score
-                outlier_score = outlier_scores.get(video_stats[vid_id]["views"], 0)
-                st.markdown(f"🔍 **Outlier Score:** `{outlier_score}`")
+    # Filter by keyword
+    if keyword:
+        all_videos = [video for video in all_videos if keyword.lower() in video["title"].lower()]
 
-                st.markdown("#### 🗨️ Top Comments:")
-                for comment in comments:
-                    st.markdown(f"- **{comment['text']}** *(👍 {comment['likes']})*)")
+    video_ids = [video["video_id"] for video in all_videos]
 
-                if transcript != "Transcript is not available for this video.":
-                    st.download_button(
-                        label="📥 Download Transcript",
-                        data=transcript.encode("utf-8"),
-                        file_name=f"{video['title']}_transcript.txt",
-                        mime="text/plain"
-                    )
+    with st.spinner("Fetching video statistics..."):
+        video_stats = get_video_statistics(video_ids)
 
-                    if st.button(f"🧠 Analyze Patterns", key=vid_id):
-                        with st.spinner("Analyzing patterns..."):
-                            analysis_result = analyze_patterns(transcript, comments)
-                            st.download_button(
-                                label="📥 Download Analysis",
-                                data=analysis_result.encode("utf-8"),
-                                file_name=f"{video['title']}_patterns.txt",
-                                mime="text/plain"
-                            )
-                else:
-                    st.markdown("⚠️ **Transcript not available for this video.**")
+    if not video_stats:
+        st.warning("No video statistics found.")
+        st.stop()
+
+    # Calculate outlier scores
+    view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
+    outlier_scores = compute_outlier_scores(view_counts)
+
+    # Prepare data for display
+    video_data = []
+    for video in all_videos:
+        vid_id = video["video_id"]
+        if vid_id in video_stats:
+            stats = video_stats[vid_id]
+            outlier_score = outlier_scores.get(vid_id, 0)
+            view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)  # Avoid division by zero
+            view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
+
+            video_data.append({
+                "Thumbnail": video["thumbnail"],
+                "Title": video["title"],
+                "Views": stats["views"],
+                "Outlier Score": outlier_score,
+                "View-to-Like Ratio": view_to_like_ratio,
+                "View-to-Comment Ratio": view_to_comment_ratio,
+                "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
+            })
+
+    df = pd.DataFrame(video_data)
+
+    # Sorting Options
+    sort_option = st.selectbox("Sort by", ["Outlier Score", "Views", "View-to-Like Ratio"])
+    df = df.sort_values(by=sort_option, ascending=False)
+
+    # Display Data
+    st.write("### 📊 Outlier Videos in Selected Niche")
+    st.dataframe(df[["Title", "Views", "Outlier Score", "View-to-Like Ratio", "View-to-Comment Ratio", "Video Link"]])
+
