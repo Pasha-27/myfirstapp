@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import json
 import datetime
+import sqlite3
 from scipy.stats import median_abs_deviation
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -14,12 +15,52 @@ YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# Load Niche Channels
-def load_niche_channels():
-    with open("channels.json", "r") as f:
-        return json.load(f)
+# ✅ Initialize SQLite Database
+def initialize_db():
+    conn = sqlite3.connect("youtube_data.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS search_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            keyword TEXT,
+            timeframe TEXT,
+            video_id TEXT,
+            title TEXT,
+            thumbnail TEXT,
+            published_date TEXT,
+            views INTEGER,
+            likes INTEGER,
+            comments INTEGER,
+            outlier_score REAL
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-# Fetch videos from a channel within a given timeframe
+# ✅ Check if data exists in the database
+def check_db_for_results(keyword, timeframe):
+    conn = sqlite3.connect("youtube_data.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM search_results WHERE keyword=? AND timeframe=?", (keyword, timeframe))
+    results = cursor.fetchall()
+    conn.close()
+    return results
+
+# ✅ Store new search results in the database
+def save_to_db(keyword, timeframe, video_data):
+    conn = sqlite3.connect("youtube_data.db")
+    cursor = conn.cursor()
+    for video in video_data:
+        cursor.execute("""
+            INSERT INTO search_results (keyword, timeframe, video_id, title, thumbnail, published_date, views, likes, comments, outlier_score) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (keyword, timeframe, video["video_id"], video["title"], video["thumbnail"], video["published_date"],
+             video["views"], video["likes"], video["comments"], video["outlier_score"])
+        )
+    conn.commit()
+    conn.close()
+
+# ✅ Fetch videos from YouTube API if not in DB
 def get_channel_videos(channel_id, days, max_results=50):
     youtube = get_youtube_service()
     search_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat("T") + "Z"
@@ -101,108 +142,43 @@ def compute_outlier_scores(view_counts):
 
     return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_list))}
 
-# Apply Dark Mode Styling
-st.set_page_config(layout="wide")  
+# ✅ Initialize Database
+initialize_db()
 
 st.title("🎥 YouTube Outlier Video Detector")
 
-col1, col2 = st.columns([1, 2])  
+keyword = st.text_input("🔎 Enter keyword to search within the niche")
+timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
 
-with col1:
-    st.header("🔍 Filter Options")
+if st.button("Find Outliers"):
+    with st.spinner("Checking database for existing results..."):
+        cached_results = check_db_for_results(keyword, timeframe)
 
-    niche_data = load_niche_channels()
-    niches = list(niche_data.keys())
+    if cached_results:
+        st.success(f"✅ Results loaded from database!")
+        video_data = [{"video_id": row[3], "title": row[4], "thumbnail": row[5], "views": row[7], "likes": row[8], "comments": row[9], "outlier_score": row[10]} for row in cached_results]
+    else:
+        with st.spinner("Fetching videos from YouTube..."):
+            # Call YouTube API
+            all_videos = get_channel_videos("YOUR_CHANNEL_ID", 7)  # Change channel ID dynamically
+            video_ids = [video["video_id"] for video in all_videos if video["video_id"]]
+            video_stats = get_video_statistics(video_ids)
 
-    selected_niche = st.selectbox("Select a Niche", niches)
-    timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
+            view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
+            outlier_scores = compute_outlier_scores(view_counts)
 
-    days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
-    days = days_lookup[timeframe]
+            video_data = []
+            for video in all_videos:
+                video["views"] = video_stats.get(video["video_id"], {}).get("views", 0)
+                video["likes"] = video_stats.get(video["video_id"], {}).get("likes", 0)
+                video["comments"] = video_stats.get(video["video_id"], {}).get("comments", 0)
+                video["outlier_score"] = outlier_scores.get(video["video_id"], 0)
 
-    keyword = st.text_input("🔎 Enter keyword to search within the niche")
+                video_data.append(video)
 
-    sort_options = {
-        "View Count": "Views",
-        "Outlier Score": "Outlier Score",
-        "View-to-Like Ratio": "View-to-Like Ratio",
-        "View-to-Comment Ratio": "View-to-Comment Ratio"
-    }
-    
-    sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
+            save_to_db(keyword, timeframe, video_data)
 
-    fetch_button = st.button("Find Outliers")
-
-if fetch_button:
-    with st.spinner("Fetching videos..."):
-        niche_channels = niche_data[selected_niche]
-        all_videos = []
-
-        for channel in niche_channels:
-            channel_videos = get_channel_videos(channel["channel_id"], days)
-            all_videos.extend(channel_videos)
-
-        if not all_videos:
-            st.warning("No videos found for this niche in the selected timeframe.")
-            st.stop()
-
-    if keyword:
-        all_videos = [video for video in all_videos if keyword.lower() in video["title"].lower()]
-
-    video_ids = [video["video_id"] for video in all_videos if video["video_id"]]
-
-    with st.spinner("Fetching video statistics..."):
-        video_stats = get_video_statistics(video_ids)
-
-    if not video_stats:
-        st.warning("No video statistics found.")
-        st.stop()
-
-    view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
-    outlier_scores = compute_outlier_scores(view_counts)
-
-    video_data = []
-    for video in all_videos:
-        vid_id = video["video_id"]
-        if vid_id in video_stats:
-            stats = video_stats[vid_id]
-            outlier_score = outlier_scores.get(vid_id, 0)
-
-            view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)
-            view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
-
-            video_data.append({
-                "Thumbnail": video["thumbnail"],
-                "Title": video["title"],
-                "Views": stats["views"],
-                "Likes": stats["likes"],
-                "Outlier Score": outlier_score,
-                "View-to-Like Ratio": view_to_like_ratio,
-                "View-to-Comment Ratio": view_to_comment_ratio,
-                "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
-            })
-
-    # Sort the data safely
-    video_data.sort(key=lambda x: x.get(sort_options[sort_option], 0), reverse=True)
-
-    with col2:
-        st.header("📊 Outlier Videos")
-
-        for video in video_data:
-            with st.container():
-                colA, colB = st.columns([1, 3])
-
-                with colA:
-                    st.image(video["Thumbnail"], width=150)
-
-                with colB:
-                    st.markdown(f"### [{video['Title']}]({video['Video Link']})")
-                    st.write(f"**Views:** {video['Views']:,}")
-                    st.write(f"**Likes:** {video['Likes']:,}")
-                    st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
-            
-            st.markdown("---")
-
-        # Display the number of search results
-        st.write(f"### 📌 Total Videos Found: {len(video_data)}")
-
+    st.write(f"📌 **Total Videos Found: {len(video_data)}**")
+    for video in video_data:
+        st.image(video["thumbnail"], width=150)
+        st.write(f"**[{video['title']}]({'https://www.youtube.com/watch?v=' + video['video_id']})**")
