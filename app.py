@@ -197,13 +197,14 @@ if fetch_button:
 
             view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)
             view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
-
+            
             video_data.append({
-                "Thumbnail": video["thumbnail"],
-                "Title": video["title"],
-                "Views": stats["views"],
-                "Likes": stats["likes"],
-                "Outlier Score": outlier_score,
-                "View-to-Like Ratio": view_to_like_ratio,
-                "View-to-Comment Ratio": view_to_comment_ratio,
-                "Video Link": f"https://www.youtube.com/w
+            "Thumbnail": video["thumbnail"],
+            "Title": video["title"],
+            "Views": stats["views"],
+            "Likes": stats["likes"],
+            "Outlier Score": outlier_score,
+            "View-to-Like Ratio": view_to_like_ratio,
+            "View-to-Comment Ratio": view_to_comment_ratio,
+            "Video Link": f"https://www.youtube.com/watch?v={vid_id}"  # ✅ Fixed f-string
+        })
