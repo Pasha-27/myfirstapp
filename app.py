@@ -60,10 +60,11 @@ def save_to_db(keyword, timeframe, video_data):
     conn.commit()
     conn.close()
 
-# Load Niche Channels
 def load_niche_channels():
     with open("channels.json", "r") as f:
-        return json.load(f)
+        data = json.load(f)
+        st.write("Loaded Channels:", data)  # Debugging statement
+        return data
 
 # Fetch videos from a channel within a given timeframe
 def get_channel_videos(channel_id, days, max_results=50):
