@@ -37,7 +37,7 @@ def get_channel_videos(channel_id, days, max_results=50):
         
         videos = []
         for item in response.get("items", []):
-            if "videoId" in item["id"]:  # Ensure valid video ID
+            if "videoId" in item["id"]:  
                 videos.append({
                     "video_id": item["id"]["videoId"],
                     "title": item["snippet"]["title"],
@@ -101,39 +101,52 @@ def compute_outlier_scores(view_counts):
 
     return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_list))}
 
-# Streamlit UI with Two-Column Layout
-st.set_page_config(layout="wide")  # Enable wide layout
+# Apply Dark Mode Styling
+st.set_page_config(layout="wide")  
+
+st.markdown(
+    """
+    <style>
+    body {
+        color: white;
+        background-color: #121212;
+    }
+    div[data-testid="stVerticalBlock"] {
+        background-color: #1E1E1E !important;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0px 2px 10px rgba(255, 255, 255, 0.1);
+    }
+    div[data-testid="stVerticalBlock"] h2 {
+        color: #F0F0F0 !important;
+    }
+    div[data-testid="stDataFrame"] {
+        background-color: #222 !important;
+    }
+    .stButton > button {
+        background-color: #FF6B6B !important;
+        color: white !important;
+        border-radius: 5px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title("🎥 YouTube Outlier Video Detector")
 
-col1, col2 = st.columns([1, 2])  # Left: Inputs, Right: Output
+col1, col2 = st.columns([1, 2])  
 
 with col1:
     with st.container():
-        st.markdown(
-            """
-            <style>
-            div[data-testid="stVerticalBlock"] {
-                background-color: #f7f7f7;
-                padding: 15px;
-                border-radius: 10px;
-                box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        
         st.header("🔍 Filter Options")
 
-        # Load Niche Data
         niche_data = load_niche_channels()
         niches = list(niche_data.keys())
 
         selected_niche = st.selectbox("Select a Niche", niches)
         timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
 
-        # Convert timeframe to days
         days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
         days = days_lookup[timeframe]
 
@@ -159,7 +172,6 @@ if fetch_button:
             st.warning("No videos found for this niche in the selected timeframe.")
             st.stop()
 
-    # Filter by keyword
     if keyword:
         all_videos = [video for video in all_videos if keyword.lower() in video["title"].lower()]
 
@@ -172,11 +184,9 @@ if fetch_button:
         st.warning("No video statistics found.")
         st.stop()
 
-    # Calculate outlier scores
     view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
     outlier_scores = compute_outlier_scores(view_counts)
 
-    # Prepare data for display
     video_data = []
     for video in all_videos:
         vid_id = video["video_id"]
@@ -184,7 +194,7 @@ if fetch_button:
             stats = video_stats[vid_id]
             outlier_score = outlier_scores.get(vid_id, 0)
 
-            view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)  # Avoid division by zero
+            view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)
             view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
 
             video_data.append({
@@ -198,10 +208,8 @@ if fetch_button:
                 "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
             })
 
-    # Sorting the data
     video_data.sort(key=lambda x: x[sort_option.replace(" ", "_")], reverse=True)
 
-    # Display as a gallery in col2
     with col2:
         st.header("📊 Outlier Videos")
 
@@ -219,4 +227,3 @@ if fetch_button:
                     st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
             
             st.markdown("---")
-
