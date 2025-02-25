@@ -197,14 +197,35 @@ if fetch_button:
 
             view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)
             view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
-            
+
             video_data.append({
-            "Thumbnail": video["thumbnail"],
-            "Title": video["title"],
-            "Views": stats["views"],
-            "Likes": stats["likes"],
-            "Outlier Score": outlier_score,
-            "View-to-Like Ratio": view_to_like_ratio,
-            "View-to-Comment Ratio": view_to_comment_ratio,
-            "Video Link": f"https://www.youtube.com/watch?v={vid_id}"  # ✅ Fixed f-string
-        })
+                "Thumbnail": video["thumbnail"],
+                "Title": video["title"],
+                "Views": stats["views"],
+                "Likes": stats["likes"],
+                "Outlier Score": outlier_score,
+                "View-to-Like Ratio": view_to_like_ratio,
+                "View-to-Comment Ratio": view_to_comment_ratio,
+                "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
+            })
+
+    # Sort the data safely
+    video_data.sort(key=lambda x: x.get(sort_options[sort_option], 0), reverse=True)
+
+    with col2:
+        st.header("📊 Outlier Videos")
+
+        for video in video_data:
+            with st.container():
+                colA, colB = st.columns([1, 3])
+
+                with colA:
+                    st.image(video["Thumbnail"], width=150)
+
+                with colB:
+                    st.markdown(f"### [{video['Title']}]({video['Video Link']})")
+                    st.write(f"**Views:** {video['Views']:,}")
+                    st.write(f"**Likes:** {video['Likes']:,}")
+                    st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
+            
+            st.markdown("---")
