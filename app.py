@@ -67,6 +67,10 @@ def load_niche_channels():
 
 # Fetch videos from a channel within a given timeframe
 def get_channel_videos(channel_id, days, max_results=50):
+    if not channel_id or channel_id == "YOUR_CHANNEL_ID":
+        st.error("Please provide a valid YouTube Channel ID.")
+        return []
+
     youtube = get_youtube_service()
     search_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat("T") + "Z"
     
@@ -75,7 +79,7 @@ def get_channel_videos(channel_id, days, max_results=50):
             part="id,snippet",
             channelId=channel_id,
             publishedAfter=search_date,
-            maxResults=max_results,
+            maxResults=min(max_results, 50),  # Ensuring maxResults is within API limits
             type="video",
             order="date"
         )
@@ -95,6 +99,7 @@ def get_channel_videos(channel_id, days, max_results=50):
     except HttpError as e:
         st.error(f"API Error: {e}")
         return []
+
 
 # Fetch video statistics
 def get_video_statistics(video_ids):
