@@ -120,9 +120,6 @@ st.markdown(
     div[data-testid="stVerticalBlock"] h2 {
         color: #F0F0F0 !important;
     }
-    div[data-testid="stDataFrame"] {
-        background-color: #222 !important;
-    }
     .stButton > button {
         background-color: #FF6B6B !important;
         color: white !important;
@@ -152,10 +149,14 @@ with col1:
 
         keyword = st.text_input("🔎 Enter keyword to search within the niche")
 
-        sort_option = st.selectbox(
-            "Sort results by",
-            ["View Count", "Outlier Score", "View-to-Like Ratio", "View-to-Comment Ratio"]
-        )
+        sort_options = {
+            "View Count": "Views",
+            "Outlier Score": "Outlier Score",
+            "View-to-Like Ratio": "View-to-Like Ratio",
+            "View-to-Comment Ratio": "View-to-Comment Ratio"
+        }
+        
+        sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
 
         fetch_button = st.button("Find Outliers")
 
@@ -208,7 +209,8 @@ if fetch_button:
                 "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
             })
 
-    video_data.sort(key=lambda x: x[sort_option.replace(" ", "_")], reverse=True)
+    # Sort the data safely
+    video_data.sort(key=lambda x: x.get(sort_options[sort_option], 0), reverse=True)
 
     with col2:
         st.header("📊 Outlier Videos")
