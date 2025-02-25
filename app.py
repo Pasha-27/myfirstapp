@@ -60,7 +60,12 @@ def save_to_db(keyword, timeframe, video_data):
     conn.commit()
     conn.close()
 
-# ✅ Fetch videos from YouTube API if not in DB
+# Load Niche Channels
+def load_niche_channels():
+    with open("channels.json", "r") as f:
+        return json.load(f)
+
+# Fetch videos from a channel within a given timeframe
 def get_channel_videos(channel_id, days, max_results=50):
     youtube = get_youtube_service()
     search_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat("T") + "Z"
@@ -145,12 +150,39 @@ def compute_outlier_scores(view_counts):
 # ✅ Initialize Database
 initialize_db()
 
+# Apply Dark Mode Styling
+st.set_page_config(layout="wide")  
+
 st.title("🎥 YouTube Outlier Video Detector")
 
-keyword = st.text_input("🔎 Enter keyword to search within the niche")
-timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
+col1, col2 = st.columns([1, 2])  
 
-if st.button("Find Outliers"):
+with col1:
+    st.header("🔍 Filter Options")
+
+    niche_data = load_niche_channels()
+    niches = list(niche_data.keys())
+
+    selected_niche = st.selectbox("Select a Niche", niches)
+    timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
+
+    days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
+    days = days_lookup[timeframe]
+
+    keyword = st.text_input("🔎 Enter keyword to search within the niche")
+
+    sort_options = {
+        "View Count": "Views",
+        "Outlier Score": "Outlier Score",
+        "View-to-Like Ratio": "View-to-Like Ratio",
+        "View-to-Comment Ratio": "View-to-Comment Ratio"
+    }
+    
+    sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
+
+    fetch_button = st.button("Find Outliers")
+
+if fetch_button:
     with st.spinner("Checking database for existing results..."):
         cached_results = check_db_for_results(keyword, timeframe)
 
@@ -160,7 +192,7 @@ if st.button("Find Outliers"):
     else:
         with st.spinner("Fetching videos from YouTube..."):
             # Call YouTube API
-            all_videos = get_channel_videos("YOUR_CHANNEL_ID", 7)  # Change channel ID dynamically
+            all_videos = get_channel_videos("YOUR_CHANNEL_ID", days)  # Change channel ID dynamically
             video_ids = [video["video_id"] for video in all_videos if video["video_id"]]
             video_stats = get_video_statistics(video_ids)
 
@@ -178,7 +210,18 @@ if st.button("Find Outliers"):
 
             save_to_db(keyword, timeframe, video_data)
 
-    st.write(f"📌 **Total Videos Found: {len(video_data)}**")
-    for video in video_data:
-        st.image(video["thumbnail"], width=150)
-        st.write(f"**[{video['title']}]({'https://www.youtube.com/watch?v=' + video['video_id']})**")
+    with col2:
+        st.header("📊 Outlier Videos")
+        st.write(f"📌 **Total Videos Found: {len(video_data)}**")
+
+        for video in video_data:
+            with st.container():
+                colA, colB = st.columns([1, 3])
+                with colA:
+                    st.image(video["thumbnail"], width=150)
+                with colB:
+                    st.markdown(f"### [{video['title']}]({'https://www.youtube.com/watch?v=' + video['video_id']})")
+                    st.write(f"**Views:** {video['views']:,}")
+                    st.write(f"**Likes:** {video['likes']:,}")
+                    st.write(f"**Outlier Score:** `{video['outlier_score']}`")
+            st.markdown("---")
