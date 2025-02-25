@@ -37,6 +37,14 @@ def initialize_db():
     conn.commit()
     conn.close()
 
+# ✅ Clear Cache (Delete all records from the database)
+def clear_cache():
+    conn = sqlite3.connect("youtube_data.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM search_results")  # Deletes all stored results
+    conn.commit()
+    conn.close()
+
 # ✅ Check if data exists in the database
 def check_db_for_results(keyword, timeframe):
     conn = sqlite3.connect("youtube_data.db")
@@ -119,6 +127,11 @@ with col1:
     sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
 
     fetch_button = st.button("Find Outliers")
+
+    # ✅ Add Clear Cache Button
+    if st.button("🗑️ Clear Cache"):
+        clear_cache()
+        st.success("Cache cleared! The database has been reset.")
 
 if fetch_button:
     with st.spinner("Checking database for existing results..."):
