@@ -104,61 +104,34 @@ def compute_outlier_scores(view_counts):
 # Apply Dark Mode Styling
 st.set_page_config(layout="wide")  
 
-st.markdown(
-    """
-    <style>
-    body {
-        color: white;
-        background-color: #121212;
-    }
-    div[data-testid="stVerticalBlock"] {
-        background-color: #1E1E1E !important;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0px 2px 10px rgba(255, 255, 255, 0.1);
-    }
-    div[data-testid="stVerticalBlock"] h2 {
-        color: #F0F0F0 !important;
-    }
-    .stButton > button {
-        background-color: #FF6B6B !important;
-        color: white !important;
-        border-radius: 5px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 st.title("🎥 YouTube Outlier Video Detector")
 
 col1, col2 = st.columns([1, 2])  
 
 with col1:
-    with st.container():
-        st.header("🔍 Filter Options")
+    st.header("🔍 Filter Options")
 
-        niche_data = load_niche_channels()
-        niches = list(niche_data.keys())
+    niche_data = load_niche_channels()
+    niches = list(niche_data.keys())
 
-        selected_niche = st.selectbox("Select a Niche", niches)
-        timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
+    selected_niche = st.selectbox("Select a Niche", niches)
+    timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
 
-        days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
-        days = days_lookup[timeframe]
+    days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
+    days = days_lookup[timeframe]
 
-        keyword = st.text_input("🔎 Enter keyword to search within the niche")
+    keyword = st.text_input("🔎 Enter keyword to search within the niche")
 
-        sort_options = {
-            "View Count": "Views",
-            "Outlier Score": "Outlier Score",
-            "View-to-Like Ratio": "View-to-Like Ratio",
-            "View-to-Comment Ratio": "View-to-Comment Ratio"
-        }
-        
-        sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
+    sort_options = {
+        "View Count": "Views",
+        "Outlier Score": "Outlier Score",
+        "View-to-Like Ratio": "View-to-Like Ratio",
+        "View-to-Comment Ratio": "View-to-Comment Ratio"
+    }
+    
+    sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
 
-        fetch_button = st.button("Find Outliers")
+    fetch_button = st.button("Find Outliers")
 
 if fetch_button:
     with st.spinner("Fetching videos..."):
@@ -206,4 +179,30 @@ if fetch_button:
                 "Outlier Score": outlier_score,
                 "View-to-Like Ratio": view_to_like_ratio,
                 "View-to-Comment Ratio": view_to_comment_ratio,
-                "Video Link": f"https://www.youtube.com/w
+                "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
+            })
+
+    # Sort the data safely
+    video_data.sort(key=lambda x: x.get(sort_options[sort_option], 0), reverse=True)
+
+    with col2:
+        st.header("📊 Outlier Videos")
+
+        for video in video_data:
+            with st.container():
+                colA, colB = st.columns([1, 3])
+
+                with colA:
+                    st.image(video["Thumbnail"], width=150)
+
+                with colB:
+                    st.markdown(f"### [{video['Title']}]({video['Video Link']})")
+                    st.write(f"**Views:** {video['Views']:,}")
+                    st.write(f"**Likes:** {video['Likes']:,}")
+                    st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
+            
+            st.markdown("---")
+
+        # Display the number of search results
+        st.write(f"### 📌 Total Videos Found: {len(video_data)}")
+
