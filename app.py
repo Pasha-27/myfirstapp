@@ -206,26 +206,4 @@ if fetch_button:
                 "Outlier Score": outlier_score,
                 "View-to-Like Ratio": view_to_like_ratio,
                 "View-to-Comment Ratio": view_to_comment_ratio,
-                "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
-            })
-
-    # Sort the data safely
-    video_data.sort(key=lambda x: x.get(sort_options[sort_option], 0), reverse=True)
-
-    with col2:
-        st.header("📊 Outlier Videos")
-
-        for video in video_data:
-            with st.container():
-                colA, colB = st.columns([1, 3])
-
-                with colA:
-                    st.image(video["Thumbnail"], width=150)
-
-                with colB:
-                    st.markdown(f"### [{video['Title']}]({video['Video Link']})")
-                    st.write(f"**Views:** {video['Views']:,}")
-                    st.write(f"**Likes:** {video['Likes']:,}")
-                    st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
-            
-            st.markdown("---")
+                "Video Link": f"https://www.youtube.com/w
