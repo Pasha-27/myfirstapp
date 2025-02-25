@@ -109,22 +109,42 @@ st.title("🎥 YouTube Outlier Video Detector")
 col1, col2 = st.columns([1, 2])  # Left: Inputs, Right: Output
 
 with col1:
-    st.header("🔍 Filter Options")
+    with st.container():
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stVerticalBlock"] {
+                background-color: #f7f7f7;
+                padding: 15px;
+                border-radius: 10px;
+                box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        
+        st.header("🔍 Filter Options")
 
-    # Load Niche Data
-    niche_data = load_niche_channels()
-    niches = list(niche_data.keys())
+        # Load Niche Data
+        niche_data = load_niche_channels()
+        niches = list(niche_data.keys())
 
-    selected_niche = st.selectbox("Select a Niche", niches)
-    timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
+        selected_niche = st.selectbox("Select a Niche", niches)
+        timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
 
-    # Convert timeframe to days
-    days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
-    days = days_lookup[timeframe]
+        # Convert timeframe to days
+        days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
+        days = days_lookup[timeframe]
 
-    keyword = st.text_input("🔎 Enter keyword to search within the niche")
+        keyword = st.text_input("🔎 Enter keyword to search within the niche")
 
-    fetch_button = st.button("Find Outliers")
+        sort_option = st.selectbox(
+            "Sort results by",
+            ["View Count", "Outlier Score", "View-to-Like Ratio", "View-to-Comment Ratio"]
+        )
+
+        fetch_button = st.button("Find Outliers")
 
 if fetch_button:
     with st.spinner("Fetching videos..."):
@@ -164,32 +184,39 @@ if fetch_button:
             stats = video_stats[vid_id]
             outlier_score = outlier_scores.get(vid_id, 0)
 
+            view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)  # Avoid division by zero
+            view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
+
             video_data.append({
                 "Thumbnail": video["thumbnail"],
                 "Title": video["title"],
                 "Views": stats["views"],
                 "Likes": stats["likes"],
                 "Outlier Score": outlier_score,
+                "View-to-Like Ratio": view_to_like_ratio,
+                "View-to-Comment Ratio": view_to_comment_ratio,
                 "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
             })
+
+    # Sorting the data
+    video_data.sort(key=lambda x: x[sort_option.replace(" ", "_")], reverse=True)
 
     # Display as a gallery in col2
     with col2:
         st.header("📊 Outlier Videos")
-        
-        for idx, video in enumerate(video_data):
+
+        for video in video_data:
             with st.container():
-                colA, colB = st.columns([1, 3])  # Thumbnail on left, details on right
-                
+                colA, colB = st.columns([1, 3])
+
                 with colA:
                     st.image(video["Thumbnail"], width=150)
-                
+
                 with colB:
                     st.markdown(f"### [{video['Title']}]({video['Video Link']})")
                     st.write(f"**Views:** {video['Views']:,}")
                     st.write(f"**Likes:** {video['Likes']:,}")
                     st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
             
-            # Add spacing after each video
             st.markdown("---")
 
