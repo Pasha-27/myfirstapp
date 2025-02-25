@@ -50,23 +50,22 @@ def get_channel_videos(channel_id, days, max_results=50):
         st.error(f"API Error: {e}")
         return []
 
-# Fetch video statistics (Fixed for API request error)
+# Fetch video statistics
 def get_video_statistics(video_ids):
     youtube = get_youtube_service()
     
-    if not video_ids:  # Ensure we have valid video IDs before making requests
+    if not video_ids:
         return {}
 
     video_stats = {}
 
-    # Split into chunks (YouTube API allows max 50 video IDs per request)
     for i in range(0, len(video_ids), 50):
         chunk = video_ids[i:i + 50]
         
         try:
             request = youtube.videos().list(
                 part="statistics",
-                id=",".join(chunk)  # Ensure valid comma-separated IDs
+                id=",".join(chunk)
             )
             response = request.execute()
             
@@ -84,49 +83,54 @@ def get_video_statistics(video_ids):
 
 # Compute outlier scores using Modified Z-Score
 def compute_outlier_scores(view_counts):
-    """Computes outlier scores for videos based on view counts using the Modified Z-score method."""
-    
-    if not view_counts:  # Handle case where there are no views
+    if not view_counts:
         return {}
 
-    view_list = list(view_counts.values())  # Convert dictionary values to a list
+    view_list = list(view_counts.values())
 
     if len(view_list) < 2:
-        return {vid: 0 for vid in view_counts}  # Avoid division by zero
+        return {vid: 0 for vid in view_counts}
 
     median_views = np.median(view_list)
     mad = median_abs_deviation(view_list)
 
-    if mad == 0:  # Prevent division by zero
+    if mad == 0:
         return {vid: 0 for vid in view_counts}
 
     scores = [0.6745 * (view - median_views) / mad for view in view_list]
 
     return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_list))}
 
+# Streamlit UI with Two-Column Layout
+st.set_page_config(layout="wide")  # Enable wide layout
 
-# Streamlit UI
 st.title("🎥 YouTube Outlier Video Detector")
 
-# Load Niche Data
-niche_data = load_niche_channels()
-niches = list(niche_data.keys())
+col1, col2 = st.columns([1, 2])  # Left: Inputs, Right: Output
 
-selected_niche = st.selectbox("Select a Niche", niches)
-timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
+with col1:
+    st.header("🔍 Filter Options")
 
-# Convert timeframe to days
-days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
-days = days_lookup[timeframe]
+    # Load Niche Data
+    niche_data = load_niche_channels()
+    niches = list(niche_data.keys())
 
-keyword = st.text_input("🔎 Enter keyword to search within the niche")
+    selected_niche = st.selectbox("Select a Niche", niches)
+    timeframe = st.radio("Select Timeframe", ["Last 7 Days", "Last 14 Days", "Last 28 Days"])
 
-if st.button("Find Outliers"):
+    # Convert timeframe to days
+    days_lookup = {"Last 7 Days": 7, "Last 14 Days": 14, "Last 28 Days": 28}
+    days = days_lookup[timeframe]
+
+    keyword = st.text_input("🔎 Enter keyword to search within the niche")
+
+    fetch_button = st.button("Find Outliers")
+
+if fetch_button:
     with st.spinner("Fetching videos..."):
         niche_channels = niche_data[selected_niche]
         all_videos = []
 
-        # Fetch videos from all channels in the selected niche
         for channel in niche_channels:
             channel_videos = get_channel_videos(channel["channel_id"], days)
             all_videos.extend(channel_videos)
@@ -159,25 +163,33 @@ if st.button("Find Outliers"):
         if vid_id in video_stats:
             stats = video_stats[vid_id]
             outlier_score = outlier_scores.get(vid_id, 0)
-            view_to_like_ratio = round(stats["views"] / (stats["likes"] + 1), 2)  # Avoid division by zero
-            view_to_comment_ratio = round(stats["views"] / (stats["comments"] + 1), 2)
 
             video_data.append({
                 "Thumbnail": video["thumbnail"],
                 "Title": video["title"],
                 "Views": stats["views"],
+                "Likes": stats["likes"],
                 "Outlier Score": outlier_score,
-                "View-to-Like Ratio": view_to_like_ratio,
-                "View-to-Comment Ratio": view_to_comment_ratio,
                 "Video Link": f"https://www.youtube.com/watch?v={vid_id}"
             })
 
-    df = pd.DataFrame(video_data)
+    # Display as a gallery in col2
+    with col2:
+        st.header("📊 Outlier Videos")
+        
+        for idx, video in enumerate(video_data):
+            with st.container():
+                colA, colB = st.columns([1, 3])  # Thumbnail on left, details on right
+                
+                with colA:
+                    st.image(video["Thumbnail"], width=150)
+                
+                with colB:
+                    st.markdown(f"### [{video['Title']}]({video['Video Link']})")
+                    st.write(f"**Views:** {video['Views']:,}")
+                    st.write(f"**Likes:** {video['Likes']:,}")
+                    st.write(f"**Outlier Score:** `{video['Outlier Score']}`")
+            
+            # Add spacing after each video
+            st.markdown("---")
 
-    # Sorting Options
-    sort_option = st.selectbox("Sort by", ["Outlier Score", "Views", "View-to-Like Ratio"])
-    df = df.sort_values(by=sort_option, ascending=False)
-
-    # Display Data
-    st.write("### 📊 Outlier Videos in Selected Niche")
-    st.dataframe(df[["Title", "Views", "Outlier Score", "View-to-Like Ratio", "View-to-Comment Ratio", "Video Link"]])
