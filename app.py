@@ -153,6 +153,15 @@ initialize_db()
 # Apply Dark Mode Styling
 st.set_page_config(layout="wide")  
 
+st.markdown("""
+    <style>
+    body { color: white; background-color: #121212; }
+    div[data-testid="stVerticalBlock"] { background-color: #1E1E1E !important; padding: 15px; border-radius: 10px; }
+    div[data-testid="stVerticalBlock"] h2 { color: #F0F0F0 !important; }
+    .stButton > button { background-color: #FF6B6B !important; color: white !important; border-radius: 5px; }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("🎥 YouTube Outlier Video Detector")
 
 col1, col2 = st.columns([1, 2])  
@@ -171,6 +180,15 @@ with col1:
 
     keyword = st.text_input("🔎 Enter keyword to search within the niche")
 
+    sort_options = {
+        "View Count": "Views",
+        "Outlier Score": "Outlier Score",
+        "View-to-Like Ratio": "View-to-Like Ratio",
+        "View-to-Comment Ratio": "View-to-Comment Ratio"
+    }
+    
+    sort_option = st.selectbox("Sort results by", list(sort_options.keys()))
+
     fetch_button = st.button("Find Outliers")
 
 if fetch_button:
@@ -179,41 +197,23 @@ if fetch_button:
 
     if cached_results:
         st.success(f"✅ Results loaded from database!")
-        video_data = [{"video_id": row[3], "title": row[4], "thumbnail": row[5], "views": row[7], "likes": row[8], "comments": row[9], "outlier_score": row[10]} for row in cached_results]
+        video_data = pd.DataFrame(cached_results, columns=["id", "keyword", "timeframe", "video_id", "title", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
     else:
         with st.spinner("Fetching videos from YouTube..."):
             niche_channels = niche_data[selected_niche]
             all_videos = []
-
             for channel in niche_channels:
-                channel_videos = get_channel_videos(channel["channel_id"], days)
-                all_videos.extend(channel_videos)
+                all_videos.extend(get_channel_videos(channel["channel_id"], days))
 
             video_ids = [video["video_id"] for video in all_videos if video["video_id"]]
             video_stats = get_video_statistics(video_ids)
 
-            view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
-            outlier_scores = compute_outlier_scores(view_counts)
-
-            video_data = []
             for video in all_videos:
-                video["views"] = video_stats.get(video["video_id"], {}).get("views", 0)
-                video["likes"] = video_stats.get(video["video_id"], {}).get("likes", 0)
-                video["comments"] = video_stats.get(video["video_id"], {}).get("comments", 0)
-                video["outlier_score"] = outlier_scores.get(video["video_id"], 0)
+                video.update(video_stats.get(video["video_id"], {}))
+                video["outlier_score"] = compute_outlier_scores({video["video_id"]: video.get("views", 0)}).get(video["video_id"], 0)
 
-                video_data.append(video)
+            video_data = pd.DataFrame(all_videos)
+            save_to_db(keyword, timeframe, all_videos)
 
-            save_to_db(keyword, timeframe, video_data)
-
-    with col2:
-        st.header("📊 Outlier Videos")
-        st.write(f"📌 **Total Videos Found: {len(video_data)}**")
-
-        for video in video_data:
-            st.image(video["thumbnail"], width=150)
-            st.markdown(f"### [{video['title']}]({'https://www.youtube.com/watch?v=' + video['video_id']})")
-            st.write(f"**Views:** {video['views']:,}")
-            st.write(f"**Likes:** {video['likes']:,}")
-            st.write(f"**Outlier Score:** `{video['outlier_score']}`")
-
+    video_data.sort_values(by=sort_options[sort_option], ascending=False, inplace=True)
+    st.dataframe(video_data[["thumbnail", "title", "views", "likes", "outlier_score"]])
