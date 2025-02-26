@@ -47,93 +47,115 @@ def clear_cache():
     conn.commit()
     conn.close()
 
-# Improved database search function
+# Fixed database search function
 def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None):
     conn = sqlite3.connect("youtube_data.db")
     conn.row_factory = sqlite3.Row  # This allows accessing columns by name
     cursor = conn.cursor()
     
-    query = """
+    query_parts = ["""
         SELECT video_id, channel_id, channel_name, title, description, thumbnail, 
                published_date, fetch_date, views, likes, comments, outlier_score 
         FROM search_results
-    """
+    """]
     
     params = []
-    conditions = []
+    where_conditions = []
     
     # Filter by channel_ids in the selected niche
-    if niche and niche_data:
+    if niche and niche_data and niche in niche_data:
         channel_ids = [channel["channel_id"] for channel in niche_data[niche]]
         if channel_ids:
-            placeholders = ', '.join(['?'] * len(channel_ids))
-            conditions.append(f"channel_id IN ({placeholders})")
+            # Fixed: Use a different approach for IN clause
+            channel_placeholders = ",".join(["?"] * len(channel_ids))
+            where_conditions.append(f"channel_id IN ({channel_placeholders})")
             params.extend(channel_ids)
     
     # Filter by keyword
     if keyword:
-        conditions.append("(title LIKE ? OR description LIKE ?)")
+        where_conditions.append("(title LIKE ? OR description LIKE ?)")
         params.extend([f"%{keyword}%", f"%{keyword}%"])
     
     # Filter by outlier score
     if min_outlier_score is not None:
-        conditions.append("outlier_score >= ?")
+        where_conditions.append("outlier_score >= ?")
         params.append(min_outlier_score)
     
     # Add WHERE clause if there are conditions
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
+    if where_conditions:
+        query_parts.append("WHERE " + " AND ".join(where_conditions))
     
     # Add sorting
     if sort_by:
-        query += f" ORDER BY {sort_by} DESC"
+        query_parts.append(f"ORDER BY {sort_by} DESC")
     
-    cursor.execute(query, params)
-    results = cursor.fetchall()
+    # Join all parts of the query
+    final_query = " ".join(query_parts)
     
-    # Convert to list of dicts
-    result_list = []
-    for row in results:
-        result_list.append(dict(row))
-    
-    conn.close()
-    return result_list
+    try:
+        cursor.execute(final_query, params)
+        results = cursor.fetchall()
+        
+        # Convert to list of dicts
+        result_list = []
+        for row in results:
+            result_list.append(dict(row))
+        
+        conn.close()
+        return result_list
+    except sqlite3.Error as e:
+        st.error(f"Database error: {e}")
+        conn.close()
+        return []
 
 # Improved save to db function
 def save_to_db(video_data):
+    if not video_data:
+        return
+        
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
     
     current_date = datetime.datetime.now().isoformat()
     
     for video in video_data:
-        cursor.execute("""
-            INSERT OR REPLACE INTO search_results (
-                video_id, channel_id, channel_name, title, description, thumbnail, 
-                published_date, fetch_date, views, likes, comments, outlier_score
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            video["video_id"],
-            video.get("channel_id", ""),
-            video.get("channel_name", ""),
-            video["title"],
-            video.get("description", ""),
-            video.get("thumbnail", ""),
-            video.get("published_date", ""),
-            current_date,
-            video.get("views", 0),
-            video.get("likes", 0),
-            video.get("comments", 0),
-            video.get("outlier_score", 0)
-        ))
+        try:
+            cursor.execute("""
+                INSERT OR REPLACE INTO search_results (
+                    video_id, channel_id, channel_name, title, description, thumbnail, 
+                    published_date, fetch_date, views, likes, comments, outlier_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                video["video_id"],
+                video.get("channel_id", ""),
+                video.get("channel_name", ""),
+                video["title"],
+                video.get("description", ""),
+                video.get("thumbnail", ""),
+                video.get("published_date", ""),
+                current_date,
+                video.get("views", 0),
+                video.get("likes", 0),
+                video.get("comments", 0),
+                video.get("outlier_score", 0)
+            ))
+        except sqlite3.Error as e:
+            st.error(f"Error saving video {video.get('title', 'unknown')}: {e}")
     
     conn.commit()
     conn.close()
 
-# Load Niche Channels
+# Load Niche Channels with error handling
 def load_niche_channels():
-    with open("channels.json", "r") as f:
-        return json.load(f)
+    try:
+        with open("channels.json", "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        st.error("channels.json file not found!")
+        return {}
+    except json.JSONDecodeError:
+        st.error("Error parsing channels.json - invalid format!")
+        return {}
 
 # Compute outlier scores using Modified Z-Score
 def compute_outlier_scores(videos, metric="views"):
@@ -186,14 +208,18 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
             batch_size = min(50, max_results - total_results)
             
             # Make the API request
-            request = youtube.search().list(
-                part="id,snippet",
-                channelId=channel_id,
-                maxResults=batch_size,
-                type="video",
-                order="date",
-                pageToken=next_page_token
-            )
+            request_params = {
+                "part": "id,snippet",
+                "channelId": channel_id,
+                "maxResults": batch_size,
+                "type": "video",
+                "order": "date"
+            }
+            
+            if next_page_token:
+                request_params["pageToken"] = next_page_token
+                
+            request = youtube.search().list(**request_params)
             response = request.execute()
             
             items = response.get("items", [])
@@ -254,9 +280,11 @@ def get_video_statistics(videos):
             for item in response.get("items", []):
                 video_id = item["id"]
                 if video_id in video_dict:
-                    video_dict[video_id]["views"] = int(item["statistics"].get("viewCount", 0))
-                    video_dict[video_id]["likes"] = int(item["statistics"].get("likeCount", 0))
-                    video_dict[video_id]["comments"] = int(item["statistics"].get("commentCount", 0))
+                    # Handle missing statistics gracefully
+                    stats = item.get("statistics", {})
+                    video_dict[video_id]["views"] = int(stats.get("viewCount", 0))
+                    video_dict[video_id]["likes"] = int(stats.get("likeCount", 0))
+                    video_dict[video_id]["comments"] = int(stats.get("commentCount", 0))
             
         except HttpError as e:
             st.error(f"API Error when fetching statistics: {e}")
@@ -328,7 +356,12 @@ with st.sidebar:
     niche_data = load_niche_channels()
     niches = list(niche_data.keys())
     
-    selected_niche = st.selectbox("Select a Niche", niches)
+    if not niches:
+        st.error("No niches found in channels.json. Please check the file.")
+        selected_niche = None
+    else:
+        selected_niche = st.selectbox("Select a Niche", niches)
+    
     keyword = st.text_input("🔎 Enter keyword to search within videos")
     
     st.subheader("Advanced Options")
@@ -356,133 +389,152 @@ with st.sidebar:
         st.success("Cache cleared! The database has been reset.")
 
 # Main content area
-if fetch_button:
+if fetch_button and selected_niche:
     with st.spinner("Searching for videos..."):
-        # Check if we have cached results for this niche
-        db_results = search_db_results(
-            niche=selected_niche,
-            keyword=keyword, 
-            min_outlier_score=outlier_threshold,
-            sort_by=sort_options[sort_option],
-            niche_data=niche_data
-        )
-        
-        # Check if we need to fetch fresh data
-        refresh_needed = needs_refresh(db_results, max_age_days=refresh_days) or force_refresh
-        
-        if db_results and not refresh_needed:
-            st.success(f"✅ Found {len(db_results)} videos in the database")
-            video_data = db_results
-        else:
-            st.info("Fetching fresh data from YouTube...")
+        try:
+            # Check if we have cached results for this niche
+            db_results = search_db_results(
+                niche=selected_niche,
+                keyword=keyword, 
+                min_outlier_score=outlier_threshold,
+                sort_by=sort_options[sort_option],
+                niche_data=niche_data
+            )
             
-            # Get the channels for the selected niche
-            niche_channels = niche_data[selected_niche]
+            # Check if we need to fetch fresh data
+            refresh_needed = needs_refresh(db_results, max_age_days=refresh_days) or force_refresh
             
-            all_videos = []
-            progress_bar = st.progress(0)
-            
-            # Fetch videos for each channel
-            for i, channel in enumerate(niche_channels):
-                progress_text = f"Fetching videos from {channel['channel_name']}..."
-                st.text(progress_text)
-                
-                channel_videos = get_channel_videos(
-                    channel["channel_id"], 
-                    channel["channel_name"],
-                    max_results=max_results_per_channel
-                )
-                
-                if channel_videos:
-                    # Update progress
-                    progress_bar.progress((i + 0.5) / len(niche_channels))
-                    st.text(f"Fetching statistics for {len(channel_videos)} videos...")
-                    
-                    # Get statistics for these videos
-                    channel_videos = get_video_statistics(channel_videos)
-                    
-                    # Add to the overall list
-                    all_videos.extend(channel_videos)
-                
-                progress_bar.progress((i + 1) / len(niche_channels))
-            
-            # Calculate outlier scores
-            if all_videos:
-                st.text("Calculating outlier scores...")
-                all_videos = compute_outlier_scores(all_videos, metric="views")
-                
-                # Save to database
-                save_to_db(all_videos)
-                
-                # Filter the results based on criteria
-                video_data = [
-                    video for video in all_videos
-                    if (keyword.lower() in video["title"].lower() or 
-                        keyword.lower() in video.get("description", "").lower() or not keyword) and
-                    video.get("outlier_score", 0) >= outlier_threshold
-                ]
-                
-                # Sort by the selected option
-                video_data = sorted(
-                    video_data, 
-                    key=lambda x: x.get(sort_options[sort_option], 0), 
-                    reverse=True
-                )
-                
-                st.success(f"✅ Found {len(video_data)} videos matching your criteria")
+            if db_results and not refresh_needed:
+                st.success(f"✅ Found {len(db_results)} videos in the database")
+                video_data = db_results
             else:
-                st.warning("No videos found for the selected niche.")
-                video_data = []
-        
-        # Display the results
-        if video_data:
-            # Create dataframe for overview table
-            df = pd.DataFrame(video_data)
-            
-            # Select and rename columns for display
-            if 'channel_name' in df.columns and 'title' in df.columns:
-                display_cols = ['channel_name', 'title', 'views', 'likes', 'comments', 'outlier_score']
-                display_names = ['Channel', 'Title', 'Views', 'Likes', 'Comments', 'Outlier Score']
+                st.info("Fetching fresh data from YouTube...")
                 
-                df_display = df[display_cols].copy()
-                df_display.columns = display_names
+                # Get the channels for the selected niche
+                niche_channels = niche_data.get(selected_niche, [])
                 
-                st.subheader("Results Overview")
-                st.dataframe(df_display, height=300)
-            
-            # Detailed cards for top results
-            st.subheader("Top Videos")
-            top_videos = video_data[:10]  # Show top 10
-            
-            for video in top_videos:
-                col1, col2 = st.columns([1, 3])
-                
-                with col1:
-                    st.image(video.get("thumbnail", ""), use_column_width=True)
-                
-                with col2:
-                    st.markdown(f"### {video.get('title', 'No Title')}")
-                    st.markdown(f"**Channel:** {video.get('channel_name', 'Unknown')}")
+                if not niche_channels:
+                    st.warning(f"No channels found for the niche: {selected_niche}")
+                    video_data = []
+                else:
+                    all_videos = []
+                    progress_bar = st.progress(0)
                     
-                    # Create three columns for stats
-                    stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-                    with stat_col1:
-                        st.metric("Views", f"{video.get('views', 0):,}")
-                    with stat_col2:
-                        st.metric("Likes", f"{video.get('likes', 0):,}")
-                    with stat_col3:
-                        st.metric("Comments", f"{video.get('comments', 0):,}")
-                    with stat_col4:
-                        st.metric("Outlier Score", f"{video.get('outlier_score', 0):.2f}")
+                    # Fetch videos for each channel
+                    for i, channel in enumerate(niche_channels):
+                        progress_text = f"Fetching videos from {channel['channel_name']}..."
+                        st.text(progress_text)
+                        
+                        channel_videos = get_channel_videos(
+                            channel["channel_id"], 
+                            channel["channel_name"],
+                            max_results=max_results_per_channel
+                        )
+                        
+                        if channel_videos:
+                            # Update progress
+                            progress_bar.progress((i + 0.5) / len(niche_channels))
+                            st.text(f"Fetching statistics for {len(channel_videos)} videos...")
+                            
+                            # Get statistics for these videos
+                            channel_videos = get_video_statistics(channel_videos)
+                            
+                            # Add to the overall list
+                            all_videos.extend(channel_videos)
+                        
+                        progress_bar.progress((i + 1) / len(niche_channels))
                     
-                    # Add a link to the video
-                    video_url = f"https://www.youtube.com/watch?v={video.get('video_id', '')}"
-                    st.markdown(f"[Watch Video]({video_url})")
+                    # Calculate outlier scores
+                    if all_videos:
+                        st.text("Calculating outlier scores...")
+                        all_videos = compute_outlier_scores(all_videos, metric="views")
+                        
+                        # Save to database
+                        save_to_db(all_videos)
+                        
+                        # Filter the results based on criteria
+                        video_data = [
+                            video for video in all_videos
+                            if (not keyword or 
+                                (keyword.lower() in video["title"].lower() or 
+                                keyword.lower() in video.get("description", "").lower())) and
+                            video.get("outlier_score", 0) >= outlier_threshold
+                        ]
+                        
+                        # Sort by the selected option
+                        video_data = sorted(
+                            video_data, 
+                            key=lambda x: x.get(sort_options[sort_option], 0), 
+                            reverse=True
+                        )
+                        
+                        st.success(f"✅ Found {len(video_data)} videos matching your criteria")
+                    else:
+                        st.warning("No videos found for the selected niche.")
+                        video_data = []
+            
+            # Display the results
+            if video_data:
+                # Create dataframe for overview table
+                df = pd.DataFrame(video_data)
                 
-                st.markdown("---")
-        
-        else:
-            st.warning("No videos found matching your criteria. Try adjusting your filters.")
+                # Select and rename columns for display
+                if 'channel_name' in df.columns and 'title' in df.columns:
+                    display_cols = ['channel_name', 'title', 'views', 'likes', 'comments', 'outlier_score']
+                    display_names = ['Channel', 'Title', 'Views', 'Likes', 'Comments', 'Outlier Score']
+                    
+                    # Ensure all necessary columns exist
+                    for col in display_cols:
+                        if col not in df.columns:
+                            df[col] = "N/A"
+                    
+                    df_display = df[display_cols].copy()
+                    df_display.columns = display_names
+                    
+                    st.subheader("Results Overview")
+                    st.dataframe(df_display, height=300)
+                
+                # Detailed cards for top results
+                st.subheader("Top Videos")
+                top_videos = video_data[:10]  # Show top 10
+                
+                for video in top_videos:
+                    col1, col2 = st.columns([1, 3])
+                    
+                    with col1:
+                        if video.get("thumbnail"):
+                            st.image(video.get("thumbnail"), use_column_width=True)
+                    
+                    with col2:
+                        st.markdown(f"### {video.get('title', 'No Title')}")
+                        st.markdown(f"**Channel:** {video.get('channel_name', 'Unknown')}")
+                        
+                        # Create three columns for stats
+                        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
+                        with stat_col1:
+                            st.metric("Views", f"{video.get('views', 0):,}")
+                        with stat_col2:
+                            st.metric("Likes", f"{video.get('likes', 0):,}")
+                        with stat_col3:
+                            st.metric("Comments", f"{video.get('comments', 0):,}")
+                        with stat_col4:
+                            st.metric("Outlier Score", f"{video.get('outlier_score', 0):.2f}")
+                        
+                        # Add a link to the video
+                        video_url = f"https://www.youtube.com/watch?v={video.get('video_id', '')}"
+                        st.markdown(f"[Watch Video]({video_url})")
+                    
+                    st.markdown("---")
+            
+            else:
+                st.warning("No videos found matching your criteria. Try adjusting your filters.")
+                
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            import traceback
+            st.error(traceback.format_exc())
+elif fetch_button and not selected_niche:
+    st.warning("Please select a niche first!")
 else:
     st.info("👈 Select filters and click 'Find Outliers' to search for videos")
     
