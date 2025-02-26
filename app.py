@@ -101,15 +101,17 @@ def clear_cache():
     conn.commit()
     conn.close()
 
-# Database search function with duplicate removal and channel exclusion
-def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None, excluded_channels=None):
+# Improved database search function with better keyword matching
+def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", 
+                      niche_data=None, excluded_channels=None, video_type=None):
     conn = sqlite3.connect("youtube_data.db")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
+    # Include the duration column if needed by video_type filtering
     query_parts = ["""
         SELECT video_id, channel_id, channel_name, title, description, thumbnail, 
-               published_date, fetch_date, views, likes, comments, outlier_score 
+               published_date, fetch_date, views, likes, comments, outlier_score, duration
         FROM search_results
     """]
     
@@ -118,7 +120,7 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
     
     if niche and niche_data and niche in niche_data:
         channel_ids = [channel["channel_id"] for channel in niche_data[niche] 
-                      if not excluded_channels or channel["channel_id"] not in excluded_channels]
+                       if not excluded_channels or channel["channel_id"] not in excluded_channels]
         if channel_ids:
             channel_placeholders = ",".join(["?"] * len(channel_ids))
             where_conditions.append(f"channel_id IN ({channel_placeholders})")
@@ -127,13 +129,27 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
             # If all channels are excluded, return empty result
             return []
     
-    if keyword:
-        where_conditions.append("(title LIKE ? OR description LIKE ?)")
-        params.extend([f"%{keyword}%", f"%{keyword}%"])
+    # Modified keyword search logic: Each search term must be present
+    if keyword and keyword.strip():
+        search_terms = keyword.strip().lower().split()
+        term_conditions = []
+        for term in search_terms:
+            term_conditions.append("(LOWER(title) LIKE ? OR LOWER(description) LIKE ?)")
+            params.extend([f"%{term}%", f"%{term}%"])
+        # Join the individual term conditions with AND so all terms must be present
+        where_conditions.append(" AND ".join(term_conditions))
     
     if min_outlier_score is not None:
         where_conditions.append("outlier_score >= ?")
         params.append(min_outlier_score)
+    
+    # Add video duration filtering
+    if video_type == "short":
+        # Short videos are <= 3 minutes (180 seconds)
+        where_conditions.append("duration <= 180")
+    elif video_type == "long":
+        # Long videos are > 3 minutes
+        where_conditions.append("duration > 180")
     
     if where_conditions:
         query_parts.append("WHERE " + " AND ".join(where_conditions))
@@ -155,6 +171,21 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
         st.error(f"Database error: {e}")
         conn.close()
         return []
+
+# Custom keyword search function for memory filtering
+def keyword_match(text, keyword):
+    if not keyword or not text:
+        return True
+    
+    text = text.lower()
+    search_terms = keyword.lower().strip().split()
+    
+    # Return True if all terms are present in the text
+    for term in search_terms:
+        if term not in text:
+            return False
+    
+    return True
 
 # Improved save to db function
 def save_to_db(video_data):
@@ -205,30 +236,21 @@ def load_niche_channels():
 def compute_outlier_scores(videos, metric="views"):
     if not videos:
         return videos
-    
     video_ids = [video["video_id"] for video in videos]
     values = np.array([video.get(metric, 0) for video in videos])
-    
     if len(values) < 2:
         for video in videos:
             video["outlier_score"] = 0
         return videos
-    
     median_value = np.median(values)
     mad = median_abs_deviation(values)
-    
     if mad == 0:
         for video in videos:
             video["outlier_score"] = 0
         return videos
-    
-    # Calculate all scores at once
     scores = 0.6745 * (values - median_value) / mad
-    
-    # Assign scores back to videos
     for i, video in enumerate(videos):
         video["outlier_score"] = round(float(scores[i]), 2)
-    
     return videos
 
 # Fetch all videos from a channel with pagination
@@ -545,15 +567,12 @@ st.markdown("""
 window.addEventListener('message', function(event) {
     if (event.data.type === 'streamlit:toggleChannel') {
         const channelData = event.data.data;
-        
         // Set query parameters to communicate with Streamlit
         const searchParams = new URLSearchParams(window.location.search);
         searchParams.set('channel_id', channelData.channel_id);
         searchParams.set('action', channelData.action);
-        
         // Update URL (doesn't reload the page)
         window.history.pushState({}, '', '?' + searchParams.toString());
-        
         // Click the hidden button to trigger the Streamlit event
         setTimeout(() => {
             document.querySelector('[data-testid="stButton"] button').click();
@@ -596,7 +615,6 @@ if fetch_button and selected_niche:
                     channel for channel in niche_data.get(selected_niche, []) 
                     if channel["channel_id"] not in st.session_state.excluded_channels
                 ]
-                
                 if not niche_channels:
                     st.warning(f"No channels selected for the niche: {selected_niche}")
                     video_data = []
@@ -657,7 +675,6 @@ if fetch_button and selected_niche:
                     df_display.columns = display_names
                     st.subheader("Results Overview")
                     st.dataframe(df_display, height=300)
-                
                 # Add pagination for results
                 items_per_page = 10
                 total_pages = len(video_data) // items_per_page + (1 if len(video_data) % items_per_page > 0 else 0)
