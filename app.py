@@ -9,7 +9,6 @@ from scipy.stats import median_abs_deviation
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import openai
-from openai import ChatCompletion  # Import ChatCompletion for openai>=1.0.0
 
 # Load API Keys from Streamlit Secrets
 YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
@@ -47,7 +46,7 @@ def analyze_sentiment_for_comments(comments):
         "\n".join(f"- {comment}" for comment in comments)
     )
     try:
-        response = ChatCompletion.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that classifies text sentiment."},
@@ -57,6 +56,7 @@ def analyze_sentiment_for_comments(comments):
         )
         output_text = response.choices[0].message.content.strip()
         sentiment_dict = json.loads(output_text)
+        # Ensure all keys exist
         for key in ["positive", "neutral", "negative"]:
             if key not in sentiment_dict:
                 sentiment_dict[key] = []
