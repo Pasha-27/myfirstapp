@@ -97,7 +97,7 @@ def clear_cache():
     conn.commit()
     conn.close()
 
-# Fixed database search function
+# Fixed database search function with duplicate removal
 def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None):
     conn = sqlite3.connect("youtube_data.db")
     conn.row_factory = sqlite3.Row
@@ -139,8 +139,10 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
         cursor.execute(final_query, params)
         results = cursor.fetchall()
         result_list = [dict(row) for row in results]
+        # Remove duplicates by video_id
+        unique_results = list({video["video_id"]: video for video in result_list}.values())
         conn.close()
-        return result_list
+        return unique_results
     except sqlite3.Error as e:
         st.error(f"Database error: {e}")
         conn.close()
@@ -475,9 +477,11 @@ if fetch_button and selected_niche:
                             video for video in all_videos
                             if (not keyword or 
                                 (keyword.lower() in video["title"].lower() or 
-                                keyword.lower() in video.get("description", "").lower())) and
+                                 keyword.lower() in video.get("description", "").lower())) and
                             video.get("outlier_score", 0) >= outlier_threshold
                         ]
+                        # Remove duplicates if any
+                        video_data = list({video["video_id"]: video for video in video_data}.values())
                         video_data = sorted(
                             video_data, 
                             key=lambda x: x.get(sort_options[sort_option], 0), 
