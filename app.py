@@ -9,6 +9,7 @@ from scipy.stats import median_abs_deviation
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 import openai
+from openai import ChatCompletion  # Import ChatCompletion for openai>=1.0.0
 
 # Load API Keys from Streamlit Secrets
 YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
@@ -38,7 +39,7 @@ def get_video_comments(video_id, max_results=50):
 def analyze_sentiment_for_comments(comments):
     if not comments:
         return {"positive": [], "neutral": [], "negative": []}
-    # Create a prompt that lists the comments and asks for a JSON output
+    # Construct a prompt that lists the comments and asks for JSON classification
     prompt = (
         "Please classify the following YouTube comments into positive, neutral, and negative categories. "
         "Provide the output as a JSON object with keys 'positive', 'neutral', and 'negative', each containing "
@@ -46,7 +47,7 @@ def analyze_sentiment_for_comments(comments):
         "\n".join(f"- {comment}" for comment in comments)
     )
     try:
-        response = openai.ChatCompletion.create(
+        response = ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that classifies text sentiment."},
@@ -56,7 +57,6 @@ def analyze_sentiment_for_comments(comments):
         )
         output_text = response.choices[0].message.content.strip()
         sentiment_dict = json.loads(output_text)
-        # Ensure all keys exist
         for key in ["positive", "neutral", "negative"]:
             if key not in sentiment_dict:
                 sentiment_dict[key] = []
