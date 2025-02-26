@@ -38,7 +38,13 @@ def get_video_comments(video_id, max_results=50):
 def analyze_sentiment_for_comments(comments):
     if not comments:
         return {"positive": [], "neutral": [], "negative": []}
-    # Construct a prompt that lists the comments and asks for JSON classification
+    
+    # Check if the new ChatCompletion interface is available.
+    if not hasattr(openai, "ChatCompletion"):
+        st.error("openai.ChatCompletion is not available. Please run 'openai migrate' to update your OpenAI Python library or pin to openai==0.28.")
+        return {"positive": [], "neutral": [], "negative": []}
+    
+    # Construct the prompt from the list of comments.
     prompt = (
         "Please classify the following YouTube comments into positive, neutral, and negative categories. "
         "Provide the output as a JSON object with keys 'positive', 'neutral', and 'negative', each containing "
@@ -62,7 +68,8 @@ def analyze_sentiment_for_comments(comments):
                 sentiment_dict[key] = []
         return sentiment_dict
     except Exception as e:
-        st.error("Error during sentiment analysis: " + str(e))
+        st.error("Error during sentiment analysis: " + str(e) +
+                 ". Please run 'openai migrate' to update your OpenAI Python library or pin your installation to openai==0.28.")
         return {"positive": [], "neutral": [], "negative": []}
 
 # Initialize YouTube API
