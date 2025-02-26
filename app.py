@@ -68,8 +68,16 @@ def save_to_db(keyword, video_data):
         cursor.execute("""
             INSERT OR IGNORE INTO search_results (keyword, video_id, title, description, thumbnail, published_date, views, likes, comments, outlier_score) 
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (keyword, video["video_id"], video["title"], video["description"], video["thumbnail"], video["published_date"],
-             video["views"], video["likes"], video["comments"], video["outlier_score"])
+            (keyword, 
+             video["video_id"], 
+             video["title"], 
+             video["description"], 
+             video["thumbnail"], 
+             video["published_date"], 
+             video.get("views", 0),      # ✅ Default to 0 if missing
+             video.get("likes", 0),      # ✅ Default to 0 if missing
+             video.get("comments", 0),   # ✅ Default to 0 if missing
+             video.get("outlier_score", 0)) # ✅ Default to 0 if missing
         )
     conn.commit()
     conn.close()
@@ -232,9 +240,12 @@ if fetch_button:
 
             view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
             outlier_scores = compute_outlier_scores(view_counts)
-
+            
             for video in all_videos:
-                video["outlier_score"] = outlier_scores.get(video["video_id"], 0)
+                video["views"] = video_stats.get(video["video_id"], {}).get("views", 0)
+                video["likes"] = video_stats.get(video["video_id"], {}).get("likes", 0)
+                video["comments"] = video_stats.get(video["video_id"], {}).get("comments", 0)
+                video["outlier_score"] = outlier_scores.get(video["video_id"], 0)  # ✅ Ensure outlier_score exists
 
             save_to_db(keyword, all_videos)
 
