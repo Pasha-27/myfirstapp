@@ -15,7 +15,6 @@ YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# ✅ Initialize SQLite Database
 def initialize_db():
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
@@ -26,6 +25,7 @@ def initialize_db():
             timeframe TEXT,
             video_id TEXT UNIQUE,
             title TEXT,
+            description TEXT,  -- ✅ Added description field
             thumbnail TEXT,
             published_date TEXT,
             views INTEGER,
@@ -36,6 +36,7 @@ def initialize_db():
     """)
     conn.commit()
     conn.close()
+
 
 # ✅ Clear Cache (Delete all records from the database)
 def clear_cache():
@@ -54,19 +55,19 @@ def check_db_for_results(keyword, timeframe):
     conn.close()
     return results
 
-# ✅ Store new search results in the database
 def save_to_db(keyword, timeframe, video_data):
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
     for video in video_data:
         cursor.execute("""
-            INSERT OR IGNORE INTO search_results (keyword, timeframe, video_id, title, thumbnail, published_date, views, likes, comments, outlier_score) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (keyword, timeframe, video["video_id"], video["title"], video["thumbnail"], video["published_date"],
+            INSERT OR IGNORE INTO search_results (keyword, timeframe, video_id, title, description, thumbnail, published_date, views, likes, comments, outlier_score) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (keyword, timeframe, video["video_id"], video["title"], video["description"], video["thumbnail"], video["published_date"],
              video["views"], video["likes"], video["comments"], video["outlier_score"])
         )
     conn.commit()
     conn.close()
+
 
 # Load Niche Channels
 def load_niche_channels():
@@ -94,7 +95,6 @@ def compute_outlier_scores(view_counts):
     return {list(view_counts.keys())[i]: round(scores[i], 2) for i in range(len(view_list))}
 
 
-# Fetch videos from a channel within a given timeframe
 def get_channel_videos(channel_id, days, max_results=50):
     youtube = get_youtube_service()
     search_date = (datetime.datetime.utcnow() - datetime.timedelta(days=days)).isoformat("T") + "Z"
@@ -112,18 +112,26 @@ def get_channel_videos(channel_id, days, max_results=50):
 
         videos = []
         for item in response.get("items", []):
-            if "videoId" in item["id"]:  
+            if "videoId" in item["id"]:
+                video_id = item["id"]["videoId"]
+                title = item["snippet"]["title"]
+                description = item["snippet"].get("description", "")  # ✅ Fetch description
+                thumbnail = item["snippet"]["thumbnails"]["high"]["url"]
+                published_date = item["snippet"]["publishedAt"]
+
                 videos.append({
-                    "video_id": item["id"]["videoId"],
-                    "title": item["snippet"]["title"],
-                    "thumbnail": item["snippet"]["thumbnails"]["high"]["url"],
-                    "published_date": item["snippet"]["publishedAt"]
+                    "video_id": video_id,
+                    "title": title,
+                    "description": description,
+                    "thumbnail": thumbnail,
+                    "published_date": published_date
                 })
         return videos
 
     except HttpError as e:
         st.error(f"API Error: {e}")
         return []
+
 
 # Fetch video statistics
 def get_video_statistics(video_ids):
@@ -204,11 +212,19 @@ if fetch_button:
     if cached_results:
         st.success(f"✅ Results loaded from database!")
 
-        video_data = pd.DataFrame(cached_results, columns=["keyword", "timeframe", "video_id", "title", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
-        
+        video_data = pd.DataFrame(cached_results, columns=["keyword", "timeframe", "video_id", "title", "description", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
+
         # Convert numeric columns to int/float
         for col in ["views", "likes", "comments", "outlier_score"]:
             video_data[col] = pd.to_numeric(video_data[col], errors="coerce").fillna(0)
+
+        # ✅ Filter: Keep only outliers and match keyword in title OR description
+        if keyword:
+            video_data = video_data[
+                ((video_data["title"].str.contains(keyword, case=False, na=False)) |
+                 (video_data["description"].str.contains(keyword, case=False, na=False))) &
+                (video_data["outlier_score"] > 0)
+            ]
     else:
         with st.spinner("Fetching videos from YouTube..."):
             niche_channels = niche_data[selected_niche]
@@ -237,6 +253,15 @@ if fetch_button:
                 video_data.append(video)
 
             video_data = pd.DataFrame(video_data)
+
+            # ✅ Filter: Keep only outliers and match keyword in title OR description
+            if keyword:
+                video_data = video_data[
+                    ((video_data["title"].str.contains(keyword, case=False, na=False)) |
+                     (video_data["description"].str.contains(keyword, case=False, na=False))) &
+                    (video_data["outlier_score"] > 0)
+                ]
+
             save_to_db(keyword, timeframe, video_data.to_dict(orient="records"))
 
     # ✅ Fix: Ensure selected column exists before sorting
@@ -248,6 +273,9 @@ if fetch_button:
         st.header("📊 Outlier Videos")
         st.write(f"📌 **Total Videos Found: {len(video_data)}**")
 
+        if video_data.empty:
+            st.warning("No matching outlier videos found for the given keyword.")
+
         for _, video in video_data.iterrows():
             with st.container():
                 colA, colB = st.columns([1, 3])
@@ -258,4 +286,6 @@ if fetch_button:
                     st.write(f"**Views:** {video['views']:,}")
                     st.write(f"**Likes:** {video['likes']:,}")
                     st.write(f"**Outlier Score:** `{video['outlier_score']}`")
+                    st.write(f"**Description:** {video['description'][:250]}...")  # ✅ Show part of the description
             st.markdown("---")
+
