@@ -14,23 +14,22 @@ YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
-# ✅ Initialize SQLite Database
+# ✅ Initialize SQLite Database (Fixed: Removed 'keyword' column)
 def initialize_db():
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS search_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            keyword TEXT,
             video_id TEXT UNIQUE,
             title TEXT,
             description TEXT,
             thumbnail TEXT,
             published_date TEXT,
-            views INTEGER,
-            likes INTEGER,
-            comments INTEGER,
-            outlier_score REAL
+            views INTEGER DEFAULT 0,
+            likes INTEGER DEFAULT 0,
+            comments INTEGER DEFAULT 0,
+            outlier_score REAL DEFAULT 0
         )
     """)
     conn.commit()
@@ -59,17 +58,15 @@ def check_db_for_results():
     conn.close()
     return results
 
-
-# ✅ Store new search results in the database
-def save_to_db(keyword, video_data):
+# ✅ Store new search results in the database (Fixed: Removed keyword)
+def save_to_db(video_data):
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
     for video in video_data:
         cursor.execute("""
-            INSERT OR IGNORE INTO search_results (keyword, video_id, title, description, thumbnail, published_date, views, likes, comments, outlier_score) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (keyword, 
-             video["video_id"], 
+            INSERT OR IGNORE INTO search_results (video_id, title, description, thumbnail, published_date, views, likes, comments, outlier_score) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (video["video_id"], 
              video["title"], 
              video["description"], 
              video["thumbnail"], 
@@ -216,17 +213,15 @@ if fetch_button:
 
         video_data = pd.DataFrame(cached_results, columns=["video_id", "title", "description", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
 
-    # Convert numeric columns
         for col in ["views", "likes", "comments", "outlier_score"]:
             video_data[col] = pd.to_numeric(video_data[col], errors="coerce").fillna(0)
 
-    # ✅ Apply Keyword Filter in Python
         if keyword:
             video_data = video_data[
                 ((video_data["title"].str.contains(keyword, case=False, na=False)) |
-                (video_data["description"].str.contains(keyword, case=False, na=False))) &
+                 (video_data["description"].str.contains(keyword, case=False, na=False))) &
                 (video_data["outlier_score"] > 5)
-        ]
+            ]
 
     else:
         with st.spinner("Fetching videos from YouTube..."):
@@ -235,19 +230,7 @@ if fetch_button:
             for channel in niche_channels:
                 all_videos.extend(get_channel_videos(channel["channel_id"]))
 
-            video_ids = [video["video_id"] for video in all_videos if video["video_id"]]
-            video_stats = get_video_statistics(video_ids)
-
-            view_counts = {vid: stats["views"] for vid, stats in video_stats.items()}
-            outlier_scores = compute_outlier_scores(view_counts)
-            
-            for video in all_videos:
-                video["views"] = video_stats.get(video["video_id"], {}).get("views", 0)
-                video["likes"] = video_stats.get(video["video_id"], {}).get("likes", 0)
-                video["comments"] = video_stats.get(video["video_id"], {}).get("comments", 0)
-                video["outlier_score"] = outlier_scores.get(video["video_id"], 0)  # ✅ Ensure outlier_score exists
-
-            save_to_db(keyword, all_videos)
+            save_to_db(all_videos)
 
     video_data.sort_values(by=sort_options[sort_option], ascending=False, inplace=True)
     st.dataframe(video_data)
