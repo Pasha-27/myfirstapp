@@ -12,10 +12,6 @@ from googleapiclient.errors import HttpError
 # Load API Keys from Streamlit Secrets
 YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 
-# Initialize YouTube API
-def get_youtube_service():
-    return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-
 # Function to fetch top 50 comments for a given video
 def get_video_comments(video_id, max_results=50):
     youtube = get_youtube_service()
@@ -35,6 +31,10 @@ def get_video_comments(video_id, max_results=50):
     except HttpError as e:
         st.error(f"API Error when fetching comments for video {video_id}: {e}")
     return comments
+
+# Initialize YouTube API
+def get_youtube_service():
+    return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
 # Improved Database Schema
 def initialize_db():
@@ -446,7 +446,6 @@ if fetch_button and selected_niche:
                     progress_bar = st.progress(0)
                     
                     for i, channel in enumerate(niche_channels):
-                        # Removed fetching text to clean up UI
                         channel_videos = get_channel_videos(
                             channel["channel_id"], 
                             channel["channel_name"],
@@ -505,32 +504,24 @@ if fetch_button and selected_niche:
                 
                 st.subheader("Top Videos")
                 top_videos = video_data[:10]
-                
-                for video in top_videos:
-                    col1, col2 = st.columns([1, 3])
-                    
-                    with col1:
-                        if video.get("thumbnail"):
-                            st.image(video.get("thumbnail"), use_container_width=True)
-                    
-                    with col2:
+                # Create two columns for displaying videos side by side
+                cols = st.columns(2)
+                for idx, video in enumerate(top_videos):
+                    with cols[idx % 2]:
+                        st.image(video.get("thumbnail"), use_container_width=True)
                         st.markdown(f"### {video.get('title', 'No Title')}")
                         st.markdown(f"**Channel:** {video.get('channel_name', 'Unknown')}")
-                        
-                        stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
-                        with stat_col1:
+                        stat_cols = st.columns(4)
+                        with stat_cols[0]:
                             st.metric("Views", f"{video.get('views', 0):,}")
-                        with stat_col2:
+                        with stat_cols[1]:
                             st.metric("Likes", f"{video.get('likes', 0):,}")
-                        with stat_col3:
+                        with stat_cols[2]:
                             st.metric("Comments", f"{video.get('comments', 0):,}")
-                        with stat_col4:
+                        with stat_cols[3]:
                             st.metric("Outlier Score", f"{video.get('outlier_score', 0):.2f}")
-                        
                         video_url = f"https://www.youtube.com/watch?v={video.get('video_id', '')}"
                         st.markdown(f"[Watch Video]({video_url})")
-                        
-                        # Display top 50 comments in an expander
                         with st.expander("Show Top 50 Comments"):
                             comments = video.get("top_comments", [])
                             if comments:
@@ -538,8 +529,7 @@ if fetch_button and selected_niche:
                                     st.markdown(f"- {comment}")
                             else:
                                 st.markdown("No comments available.")
-                    
-                    st.markdown("---")
+                        st.markdown("---")
             
             else:
                 st.warning("No videos found matching your criteria. Try adjusting your filters.")
