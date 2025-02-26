@@ -4,6 +4,7 @@ import numpy as np
 import json
 import sqlite3
 import datetime
+import os
 from scipy.stats import median_abs_deviation
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -17,25 +18,62 @@ def get_youtube_service():
 
 # Improved Database Schema
 def initialize_db():
+    # Check if the database file exists
+    db_exists = os.path.exists("youtube_data.db")
+    
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS search_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            video_id TEXT UNIQUE,
-            channel_id TEXT,
-            channel_name TEXT,
-            title TEXT,
-            description TEXT,
-            thumbnail TEXT,
-            published_date TEXT,
-            fetch_date TEXT,
-            views INTEGER DEFAULT 0,
-            likes INTEGER DEFAULT 0,
-            comments INTEGER DEFAULT 0,
-            outlier_score REAL DEFAULT 0
-        )
-    """)
+    
+    if not db_exists:
+        # Create new table with the complete schema
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS search_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                video_id TEXT UNIQUE,
+                channel_id TEXT,
+                channel_name TEXT,
+                title TEXT,
+                description TEXT,
+                thumbnail TEXT,
+                published_date TEXT,
+                fetch_date TEXT,
+                views INTEGER DEFAULT 0,
+                likes INTEGER DEFAULT 0,
+                comments INTEGER DEFAULT 0,
+                outlier_score REAL DEFAULT 0
+            )
+        """)
+    else:
+        # Check existing columns and add any missing ones
+        cursor.execute("PRAGMA table_info(search_results)")
+        existing_columns = [column[1] for column in cursor.fetchall()]
+        
+        # Define all expected columns with their types
+        expected_columns = {
+            "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
+            "video_id": "TEXT UNIQUE",
+            "channel_id": "TEXT",
+            "channel_name": "TEXT",
+            "title": "TEXT",
+            "description": "TEXT",
+            "thumbnail": "TEXT",
+            "published_date": "TEXT",
+            "fetch_date": "TEXT",
+            "views": "INTEGER DEFAULT 0",
+            "likes": "INTEGER DEFAULT 0",
+            "comments": "INTEGER DEFAULT 0",
+            "outlier_score": "REAL DEFAULT 0"
+        }
+        
+        # Add any missing columns
+        for column, column_type in expected_columns.items():
+            if column not in existing_columns and column != "id":  # Skip the primary key
+                try:
+                    cursor.execute(f"ALTER TABLE search_results ADD COLUMN {column} {column_type}")
+                    st.info(f"Added missing column: {column}")
+                except sqlite3.Error as e:
+                    st.error(f"Error adding column {column}: {e}")
+    
     conn.commit()
     conn.close()
 
@@ -313,6 +351,20 @@ def needs_refresh(data, max_age_days=7):
     
     return False
 
+# Add a function to recreate database if needed
+def recreate_database():
+    try:
+        # Delete the existing database file
+        if os.path.exists("youtube_data.db"):
+            os.remove("youtube_data.db")
+            st.success("Database file removed successfully.")
+        
+        # Reinitialize the database
+        initialize_db()
+        st.success("Database has been recreated with the new schema.")
+    except Exception as e:
+        st.error(f"Error recreating database: {e}")
+
 # Initialize Database
 initialize_db()
 
@@ -383,10 +435,18 @@ with st.sidebar:
     
     fetch_button = st.button("🔍 Find Outliers")
     
+    # Database Maintenance Section
+    st.header("🛠️ Database Maintenance")
+    
     # Clear Cache Button
     if st.button("🗑️ Clear Cache"):
         clear_cache()
-        st.success("Cache cleared! The database has been reset.")
+        st.success("Cache cleared! All data has been removed from the database.")
+    
+    # Recreate Database Button
+    if st.button("🔄 Recreate Database"):
+        recreate_database()
+        st.success("Database has been recreated with the updated schema.")
 
 # Main content area
 if fetch_button and selected_niche:
