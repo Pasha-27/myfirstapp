@@ -16,16 +16,33 @@ YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
 def get_youtube_service():
     return build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
 
+# Function to fetch top 50 comments for a given video
+def get_video_comments(video_id, max_results=50):
+    youtube = get_youtube_service()
+    comments = []
+    try:
+        request = youtube.commentThreads().list(
+            part="snippet",
+            videoId=video_id,
+            maxResults=max_results,
+            textFormat="plainText"
+        )
+        response = request.execute()
+        items = response.get("items", [])
+        for item in items:
+            comment = item["snippet"]["topLevelComment"]["snippet"]["textDisplay"]
+            comments.append(comment)
+    except HttpError as e:
+        st.error(f"API Error when fetching comments for video {video_id}: {e}")
+    return comments
+
 # Improved Database Schema
 def initialize_db():
-    # Check if the database file exists
     db_exists = os.path.exists("youtube_data.db")
-    
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
     
     if not db_exists:
-        # Create new table with the complete schema
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS search_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,11 +61,8 @@ def initialize_db():
             )
         """)
     else:
-        # Check existing columns and add any missing ones
         cursor.execute("PRAGMA table_info(search_results)")
         existing_columns = [column[1] for column in cursor.fetchall()]
-        
-        # Define all expected columns with their types
         expected_columns = {
             "id": "INTEGER PRIMARY KEY AUTOINCREMENT",
             "video_id": "TEXT UNIQUE",
@@ -64,10 +78,8 @@ def initialize_db():
             "comments": "INTEGER DEFAULT 0",
             "outlier_score": "REAL DEFAULT 0"
         }
-        
-        # Add any missing columns
         for column, column_type in expected_columns.items():
-            if column not in existing_columns and column != "id":  # Skip the primary key
+            if column not in existing_columns and column != "id":
                 try:
                     cursor.execute(f"ALTER TABLE search_results ADD COLUMN {column} {column_type}")
                     st.info(f"Added missing column: {column}")
@@ -81,14 +93,14 @@ def initialize_db():
 def clear_cache():
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM search_results")  # Deletes all stored results
+    cursor.execute("DELETE FROM search_results")
     conn.commit()
     conn.close()
 
 # Fixed database search function
 def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None):
     conn = sqlite3.connect("youtube_data.db")
-    conn.row_factory = sqlite3.Row  # This allows accessing columns by name
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
     query_parts = ["""
@@ -100,45 +112,33 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
     params = []
     where_conditions = []
     
-    # Filter by channel_ids in the selected niche
     if niche and niche_data and niche in niche_data:
         channel_ids = [channel["channel_id"] for channel in niche_data[niche]]
         if channel_ids:
-            # Fixed: Use a different approach for IN clause
             channel_placeholders = ",".join(["?"] * len(channel_ids))
             where_conditions.append(f"channel_id IN ({channel_placeholders})")
             params.extend(channel_ids)
     
-    # Filter by keyword
     if keyword:
         where_conditions.append("(title LIKE ? OR description LIKE ?)")
         params.extend([f"%{keyword}%", f"%{keyword}%"])
     
-    # Filter by outlier score
     if min_outlier_score is not None:
         where_conditions.append("outlier_score >= ?")
         params.append(min_outlier_score)
     
-    # Add WHERE clause if there are conditions
     if where_conditions:
         query_parts.append("WHERE " + " AND ".join(where_conditions))
     
-    # Add sorting
     if sort_by:
         query_parts.append(f"ORDER BY {sort_by} DESC")
     
-    # Join all parts of the query
     final_query = " ".join(query_parts)
     
     try:
         cursor.execute(final_query, params)
         results = cursor.fetchall()
-        
-        # Convert to list of dicts
-        result_list = []
-        for row in results:
-            result_list.append(dict(row))
-        
+        result_list = [dict(row) for row in results]
         conn.close()
         return result_list
     except sqlite3.Error as e:
@@ -200,52 +200,39 @@ def compute_outlier_scores(videos, metric="views"):
     if not videos:
         return videos
     
-    # Extract the metric values and video IDs
-    values = {}
-    for video in videos:
-        values[video["video_id"]] = video.get(metric, 0)
+    values = {video["video_id"]: video.get(metric, 0) for video in videos}
     
-    # Need at least 2 items for meaningful calculation
     if len(values) < 2:
         for video in videos:
             video["outlier_score"] = 0
         return videos
     
-    # Calculate median and MAD
     metric_list = list(values.values())
     median_value = np.median(metric_list)
     mad = median_abs_deviation(metric_list)
     
-    # Handle case where MAD is 0
     if mad == 0:
         for video in videos:
             video["outlier_score"] = 0
         return videos
     
-    # Calculate modified z-scores
     scores = {vid: 0.6745 * (value - median_value) / mad for vid, value in values.items()}
     
-    # Update videos with outlier scores
     for video in videos:
         video["outlier_score"] = round(scores.get(video["video_id"], 0), 2)
     
     return videos
 
-# Improved function to fetch all videos from a channel with pagination
+# Fetch all videos from a channel with pagination
 def get_channel_videos(channel_id, channel_name, max_results=100):
     youtube = get_youtube_service()
     videos = []
     next_page_token = None
-    
-    # Track total results to respect max_results
     total_results = 0
     
     try:
         while total_results < max_results:
-            # Determine how many results to request in this batch
             batch_size = min(50, max_results - total_results)
-            
-            # Make the API request
             request_params = {
                 "part": "id,snippet",
                 "channelId": channel_id,
@@ -284,8 +271,6 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
             
             total_results += len(items)
             next_page_token = response.get("nextPageToken")
-            
-            # If there's no next page token, we've reached the end
             if not next_page_token:
                 break
         
@@ -295,7 +280,7 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
         st.error(f"API Error for channel {channel_name}: {e}")
         return []
 
-# Improved function to fetch video statistics in batches
+# Fetch video statistics in batches
 def get_video_statistics(videos):
     youtube = get_youtube_service()
     
@@ -318,7 +303,6 @@ def get_video_statistics(videos):
             for item in response.get("items", []):
                 video_id = item["id"]
                 if video_id in video_dict:
-                    # Handle missing statistics gracefully
                     stats = item.get("statistics", {})
                     video_dict[video_id]["views"] = int(stats.get("viewCount", 0))
                     video_dict[video_id]["likes"] = int(stats.get("likeCount", 0))
@@ -333,14 +317,11 @@ def get_video_statistics(videos):
 def needs_refresh(data, max_age_days=7):
     if not data:
         return True
-    
-    # Check if any of the entries has a fetch_date older than max_age_days
     current_date = datetime.datetime.now()
     for item in data:
         fetch_date_str = item.get("fetch_date")
         if not fetch_date_str:
             return True
-        
         try:
             fetch_date = datetime.datetime.fromisoformat(fetch_date_str)
             age = (current_date - fetch_date).days
@@ -348,18 +329,14 @@ def needs_refresh(data, max_age_days=7):
                 return True
         except ValueError:
             return True
-    
     return False
 
-# Add a function to recreate database if needed
+# Recreate database if needed
 def recreate_database():
     try:
-        # Delete the existing database file
         if os.path.exists("youtube_data.db"):
             os.remove("youtube_data.db")
             st.success("Database file removed successfully.")
-        
-        # Reinitialize the database
         initialize_db()
         st.success("Database has been recreated with the new schema.")
     except Exception as e:
@@ -370,8 +347,6 @@ initialize_db()
 
 # Apply Styling
 st.set_page_config(layout="wide", page_title="YouTube Outlier Detector")
-
-# Add custom CSS
 st.markdown("""
 <style>
     .stApp {
@@ -403,8 +378,6 @@ st.markdown("Find standout videos across channels based on performance metrics")
 # Sidebar for controls
 with st.sidebar:
     st.header("🔍 Filter Options")
-    
-    # Load channel data
     niche_data = load_niche_channels()
     niches = list(niche_data.keys())
     
@@ -435,15 +408,12 @@ with st.sidebar:
     
     fetch_button = st.button("🔍 Find Outliers")
     
-    # Database Maintenance Section
     st.header("🛠️ Database Maintenance")
     
-    # Clear Cache Button
     if st.button("🗑️ Clear Cache"):
         clear_cache()
         st.success("Cache cleared! All data has been removed from the database.")
     
-    # Recreate Database Button
     if st.button("🔄 Recreate Database"):
         recreate_database()
         st.success("Database has been recreated with the updated schema.")
@@ -452,7 +422,6 @@ with st.sidebar:
 if fetch_button and selected_niche:
     with st.spinner("Searching for videos..."):
         try:
-            # Check if we have cached results for this niche
             db_results = search_db_results(
                 niche=selected_niche,
                 keyword=keyword, 
@@ -461,7 +430,6 @@ if fetch_button and selected_niche:
                 niche_data=niche_data
             )
             
-            # Check if we need to fetch fresh data
             refresh_needed = needs_refresh(db_results, max_age_days=refresh_days) or force_refresh
             
             if db_results and not refresh_needed:
@@ -469,10 +437,7 @@ if fetch_button and selected_niche:
                 video_data = db_results
             else:
                 st.info("Fetching fresh data from YouTube...")
-                
-                # Get the channels for the selected niche
                 niche_channels = niche_data.get(selected_niche, [])
-                
                 if not niche_channels:
                     st.warning(f"No channels found for the niche: {selected_niche}")
                     video_data = []
@@ -480,11 +445,8 @@ if fetch_button and selected_niche:
                     all_videos = []
                     progress_bar = st.progress(0)
                     
-                    # Fetch videos for each channel
                     for i, channel in enumerate(niche_channels):
-                        progress_text = f"Fetching videos from {channel['channel_name']}..."
-                        st.text(progress_text)
-                        
+                        # Removed fetching text to clean up UI
                         channel_videos = get_channel_videos(
                             channel["channel_id"], 
                             channel["channel_name"],
@@ -492,27 +454,17 @@ if fetch_button and selected_niche:
                         )
                         
                         if channel_videos:
-                            # Update progress
                             progress_bar.progress((i + 0.5) / len(niche_channels))
                             st.text(f"Fetching statistics for {len(channel_videos)} videos...")
-                            
-                            # Get statistics for these videos
                             channel_videos = get_video_statistics(channel_videos)
-                            
-                            # Add to the overall list
                             all_videos.extend(channel_videos)
                         
                         progress_bar.progress((i + 1) / len(niche_channels))
                     
-                    # Calculate outlier scores
                     if all_videos:
                         st.text("Calculating outlier scores...")
                         all_videos = compute_outlier_scores(all_videos, metric="views")
-                        
-                        # Save to database
                         save_to_db(all_videos)
-                        
-                        # Filter the results based on criteria
                         video_data = [
                             video for video in all_videos
                             if (not keyword or 
@@ -520,43 +472,39 @@ if fetch_button and selected_niche:
                                 keyword.lower() in video.get("description", "").lower())) and
                             video.get("outlier_score", 0) >= outlier_threshold
                         ]
-                        
-                        # Sort by the selected option
                         video_data = sorted(
                             video_data, 
                             key=lambda x: x.get(sort_options[sort_option], 0), 
                             reverse=True
                         )
-                        
                         st.success(f"✅ Found {len(video_data)} videos matching your criteria")
                     else:
                         st.warning("No videos found for the selected niche.")
                         video_data = []
             
+            # After obtaining search results, fetch top 50 comments for each video
+            if video_data:
+                with st.spinner("Fetching top 50 comments for each video..."):
+                    for video in video_data:
+                        video["top_comments"] = get_video_comments(video["video_id"], max_results=50)
+            
             # Display the results
             if video_data:
-                # Create dataframe for overview table
                 df = pd.DataFrame(video_data)
-                
-                # Select and rename columns for display
                 if 'channel_name' in df.columns and 'title' in df.columns:
                     display_cols = ['channel_name', 'title', 'views', 'likes', 'comments', 'outlier_score']
                     display_names = ['Channel', 'Title', 'Views', 'Likes', 'Comments', 'Outlier Score']
-                    
-                    # Ensure all necessary columns exist
                     for col in display_cols:
                         if col not in df.columns:
                             df[col] = "N/A"
-                    
                     df_display = df[display_cols].copy()
                     df_display.columns = display_names
                     
                     st.subheader("Results Overview")
                     st.dataframe(df_display, height=300)
                 
-                # Detailed cards for top results
                 st.subheader("Top Videos")
-                top_videos = video_data[:10]  # Show top 10
+                top_videos = video_data[:10]
                 
                 for video in top_videos:
                     col1, col2 = st.columns([1, 3])
@@ -569,7 +517,6 @@ if fetch_button and selected_niche:
                         st.markdown(f"### {video.get('title', 'No Title')}")
                         st.markdown(f"**Channel:** {video.get('channel_name', 'Unknown')}")
                         
-                        # Create three columns for stats
                         stat_col1, stat_col2, stat_col3, stat_col4 = st.columns(4)
                         with stat_col1:
                             st.metric("Views", f"{video.get('views', 0):,}")
@@ -580,9 +527,17 @@ if fetch_button and selected_niche:
                         with stat_col4:
                             st.metric("Outlier Score", f"{video.get('outlier_score', 0):.2f}")
                         
-                        # Add a link to the video
                         video_url = f"https://www.youtube.com/watch?v={video.get('video_id', '')}"
                         st.markdown(f"[Watch Video]({video_url})")
+                        
+                        # Display top 50 comments in an expander
+                        with st.expander("Show Top 50 Comments"):
+                            comments = video.get("top_comments", [])
+                            if comments:
+                                for comment in comments:
+                                    st.markdown(f"- {comment}")
+                            else:
+                                st.markdown("No comments available.")
                     
                     st.markdown("---")
             
@@ -597,8 +552,6 @@ elif fetch_button and not selected_niche:
     st.warning("Please select a niche first!")
 else:
     st.info("👈 Select filters and click 'Find Outliers' to search for videos")
-    
-    # Display some instructions
     st.markdown("""
     ## How to use this app
     
