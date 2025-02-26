@@ -345,7 +345,7 @@ def recreate_database():
 # Initialize Database
 initialize_db()
 
-# Apply Styling
+# Apply Styling with additional CSS for metrics
 st.set_page_config(layout="wide", page_title="YouTube Outlier Detector")
 st.markdown("""
 <style>
@@ -368,6 +368,13 @@ st.markdown("""
         display: flex;
         justify-content: space-between;
         margin-top: 10px;
+    }
+    /* Reduce the font size for metric values and labels */
+    div[data-testid="stMetricValue"] {
+        font-size: 14px !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-size: 12px !important;
     }
 </style>
 """, unsafe_allow_html=True)
