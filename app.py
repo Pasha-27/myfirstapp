@@ -511,7 +511,7 @@ if fetch_button and selected_niche:
                     
                     with col1:
                         if video.get("thumbnail"):
-                            st.image(video.get("thumbnail"), use_column_width=True)
+                            st.image(video.get("thumbnail"), use_container_width=True)
                     
                     with col2:
                         st.markdown(f"### {video.get('title', 'No Title')}")
