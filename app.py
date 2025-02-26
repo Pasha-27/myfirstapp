@@ -34,42 +34,41 @@ def get_video_comments(video_id, max_results=50):
         st.error(f"API Error when fetching comments for video {video_id}: {e}")
     return comments
 
-# Function to analyze sentiment for a list of comments using OpenAI API
+# Function to analyze sentiment by separating comments into positive, neutral, and negative
 def analyze_sentiment_for_comments(comments):
     if not comments:
         return {"positive": [], "neutral": [], "negative": []}
     
-    # Check if the new ChatCompletion interface is available.
     if not hasattr(openai, "ChatCompletion"):
-        st.error("openai.ChatCompletion is not available. Please run 'openai migrate' to update your OpenAI Python library or pin to openai==0.28.")
+        st.error("openai.ChatCompletion is not available. Please run 'openai migrate' or pin your installation to openai==0.28.")
         return {"positive": [], "neutral": [], "negative": []}
     
-    # Construct the prompt from the list of comments.
+    # Modified prompt: simply separate the comments into three categories.
     prompt = (
-        "Please classify the following YouTube comments into positive, neutral, and negative categories. "
-        "Provide the output as a JSON object with keys 'positive', 'neutral', and 'negative', each containing "
-        "a list of comments that fall into that category. Here are the comments:\n\n" +
+        "Separate the following YouTube comments into positive, neutral, and negative categories. "
+        "Return the result as a JSON object with keys 'positive', 'neutral', and 'negative'. "
+        "Here are the comments:\n\n" +
         "\n".join(f"- {comment}" for comment in comments)
     )
+    
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that classifies text sentiment."},
+                {"role": "system", "content": "You are a helpful assistant that categorizes sentiment."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0
         )
         output_text = response.choices[0].message.content.strip()
         sentiment_dict = json.loads(output_text)
-        # Ensure all keys exist
+        # Ensure keys exist
         for key in ["positive", "neutral", "negative"]:
             if key not in sentiment_dict:
                 sentiment_dict[key] = []
         return sentiment_dict
     except Exception as e:
-        st.error("Error during sentiment analysis: " + str(e) +
-                 ". Please run 'openai migrate' to update your OpenAI Python library or pin your installation to openai==0.28.")
+        st.error("Error during sentiment analysis: " + str(e))
         return {"positive": [], "neutral": [], "negative": []}
 
 # Initialize YouTube API
@@ -137,7 +136,7 @@ def clear_cache():
     conn.commit()
     conn.close()
 
-# Fixed database search function with duplicate removal
+# Database search function with duplicate removal
 def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None):
     conn = sqlite3.connect("youtube_data.db")
     conn.row_factory = sqlite3.Row
@@ -179,7 +178,7 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
         cursor.execute(final_query, params)
         results = cursor.fetchall()
         result_list = [dict(row) for row in results]
-        # Remove duplicates by video_id
+        # Remove duplicates based on video_id
         unique_results = list({video["video_id"]: video for video in result_list}.values())
         conn.close()
         return unique_results
@@ -192,12 +191,9 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
 def save_to_db(video_data):
     if not video_data:
         return
-        
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
-    
     current_date = datetime.datetime.now().isoformat()
-    
     for video in video_data:
         try:
             cursor.execute("""
@@ -221,7 +217,6 @@ def save_to_db(video_data):
             ))
         except sqlite3.Error as e:
             st.error(f"Error saving video {video.get('title', 'unknown')}: {e}")
-    
     conn.commit()
     conn.close()
 
@@ -241,28 +236,21 @@ def load_niche_channels():
 def compute_outlier_scores(videos, metric="views"):
     if not videos:
         return videos
-    
     values = {video["video_id"]: video.get(metric, 0) for video in videos}
-    
     if len(values) < 2:
         for video in videos:
             video["outlier_score"] = 0
         return videos
-    
     metric_list = list(values.values())
     median_value = np.median(metric_list)
     mad = median_abs_deviation(metric_list)
-    
     if mad == 0:
         for video in videos:
             video["outlier_score"] = 0
         return videos
-    
     scores = {vid: 0.6745 * (value - median_value) / mad for vid, value in values.items()}
-    
     for video in videos:
         video["outlier_score"] = round(scores.get(video["video_id"], 0), 2)
-    
     return videos
 
 # Fetch all videos from a channel with pagination
@@ -271,7 +259,6 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
     videos = []
     next_page_token = None
     total_results = 0
-    
     try:
         while total_results < max_results:
             batch_size = min(50, max_results - total_results)
@@ -282,17 +269,13 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
                 "type": "video",
                 "order": "date"
             }
-            
             if next_page_token:
                 request_params["pageToken"] = next_page_token
-                
             request = youtube.search().list(**request_params)
             response = request.execute()
-            
             items = response.get("items", [])
             if not items:
                 break
-                
             for item in items:
                 if "videoId" in item["id"]:
                     video_id = item["id"]["videoId"]
@@ -300,7 +283,6 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
                     description = item["snippet"].get("description", "")
                     thumbnail = item["snippet"]["thumbnails"]["high"]["url"]
                     published_date = item["snippet"]["publishedAt"]
-                    
                     videos.append({
                         "video_id": video_id,
                         "channel_id": channel_id,
@@ -310,14 +292,11 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
                         "thumbnail": thumbnail,
                         "published_date": published_date
                     })
-            
             total_results += len(items)
             next_page_token = response.get("nextPageToken")
             if not next_page_token:
                 break
-        
         return videos
-    
     except HttpError as e:
         st.error(f"API Error for channel {channel_name}: {e}")
         return []
@@ -325,23 +304,18 @@ def get_channel_videos(channel_id, channel_name, max_results=100):
 # Fetch video statistics in batches
 def get_video_statistics(videos):
     youtube = get_youtube_service()
-    
     if not videos:
         return videos
-    
     video_ids = [video["video_id"] for video in videos]
     video_dict = {video["video_id"]: video for video in videos}
-    
     for i in range(0, len(video_ids), 50):
         chunk = video_ids[i:i + 50]
-        
         try:
             request = youtube.videos().list(
                 part="statistics",
                 id=",".join(chunk)
             )
             response = request.execute()
-            
             for item in response.get("items", []):
                 video_id = item["id"]
                 if video_id in video_dict:
@@ -349,10 +323,8 @@ def get_video_statistics(videos):
                     video_dict[video_id]["views"] = int(stats.get("viewCount", 0))
                     video_dict[video_id]["likes"] = int(stats.get("likeCount", 0))
                     video_dict[video_id]["comments"] = int(stats.get("commentCount", 0))
-            
         except HttpError as e:
             st.error(f"API Error when fetching statistics: {e}")
-    
     return list(video_dict.values())
 
 # Check if data needs refreshing
@@ -493,22 +465,18 @@ if fetch_button and selected_niche:
                 else:
                     all_videos = []
                     progress_bar = st.progress(0)
-                    
                     for i, channel in enumerate(niche_channels):
                         channel_videos = get_channel_videos(
                             channel["channel_id"], 
                             channel["channel_name"],
                             max_results=max_results_per_channel
                         )
-                        
                         if channel_videos:
                             progress_bar.progress((i + 0.5) / len(niche_channels))
                             st.text(f"Fetching statistics for {len(channel_videos)} videos...")
                             channel_videos = get_video_statistics(channel_videos)
                             all_videos.extend(channel_videos)
-                        
                         progress_bar.progress((i + 1) / len(niche_channels))
-                    
                     if all_videos:
                         st.text("Calculating outlier scores...")
                         all_videos = compute_outlier_scores(all_videos, metric="views")
@@ -549,10 +517,8 @@ if fetch_button and selected_niche:
                             df[col] = "N/A"
                     df_display = df[display_cols].copy()
                     df_display.columns = display_names
-                    
                     st.subheader("Results Overview")
                     st.dataframe(df_display, height=300)
-                
                 st.subheader("Top Videos")
                 top_videos = video_data[:10]
                 # Create two columns for displaying videos side by side
@@ -602,10 +568,8 @@ if fetch_button and selected_niche:
                             else:
                                 st.markdown("No comments available.")
                         st.markdown("---")
-            
             else:
                 st.warning("No videos found matching your criteria. Try adjusting your filters.")
-                
         except Exception as e:
             st.error(f"An error occurred: {e}")
             import traceback
