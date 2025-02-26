@@ -204,20 +204,20 @@ if fetch_button:
         cached_results = check_db_for_results(keyword)
 
     if cached_results:
-    st.success(f"✅ Results loaded from database!")
+        st.success(f"✅ Results loaded from database!")
 
-    video_data = pd.DataFrame(cached_results, columns=["video_id", "title", "description", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
+        video_data = pd.DataFrame(cached_results, columns=["video_id", "title", "description", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
 
     # Convert numeric columns
-    for col in ["views", "likes", "comments", "outlier_score"]:
-        video_data[col] = pd.to_numeric(video_data[col], errors="coerce").fillna(0)
+        for col in ["views", "likes", "comments", "outlier_score"]:
+            video_data[col] = pd.to_numeric(video_data[col], errors="coerce").fillna(0)
 
     # ✅ Apply Keyword Filter in Python
-    if keyword:
-        video_data = video_data[
-            ((video_data["title"].str.contains(keyword, case=False, na=False)) |
-             (video_data["description"].str.contains(keyword, case=False, na=False))) &
-            (video_data["outlier_score"] > 5)
+        if keyword:
+            video_data = video_data[
+                ((video_data["title"].str.contains(keyword, case=False, na=False)) |
+                (video_data["description"].str.contains(keyword, case=False, na=False))) &
+                (video_data["outlier_score"] > 5)
         ]
 
     else:
