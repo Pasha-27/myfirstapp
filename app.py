@@ -8,9 +8,11 @@ import os
 from scipy.stats import median_abs_deviation
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+import openai
 
 # Load API Keys from Streamlit Secrets
 YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 # Function to fetch top 50 comments for a given video
 def get_video_comments(video_id, max_results=50):
@@ -31,6 +33,37 @@ def get_video_comments(video_id, max_results=50):
     except HttpError as e:
         st.error(f"API Error when fetching comments for video {video_id}: {e}")
     return comments
+
+# Function to analyze sentiment for a list of comments using OpenAI API
+def analyze_sentiment_for_comments(comments):
+    if not comments:
+        return {"positive": [], "neutral": [], "negative": []}
+    # Create a prompt that lists the comments and asks for a JSON output
+    prompt = (
+        "Please classify the following YouTube comments into positive, neutral, and negative categories. "
+        "Provide the output as a JSON object with keys 'positive', 'neutral', and 'negative', each containing "
+        "a list of comments that fall into that category. Here are the comments:\n\n" +
+        "\n".join(f"- {comment}" for comment in comments)
+    )
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that classifies text sentiment."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0
+        )
+        output_text = response.choices[0].message.content.strip()
+        sentiment_dict = json.loads(output_text)
+        # Ensure all keys exist
+        for key in ["positive", "neutral", "negative"]:
+            if key not in sentiment_dict:
+                sentiment_dict[key] = []
+        return sentiment_dict
+    except Exception as e:
+        st.error("Error during sentiment analysis: " + str(e))
+        return {"positive": [], "neutral": [], "negative": []}
 
 # Initialize YouTube API
 def get_youtube_service():
@@ -533,11 +566,32 @@ if fetch_button and selected_niche:
                             st.metric("Outlier Score", f"{video.get('outlier_score', 0):.2f}")
                         video_url = f"https://www.youtube.com/watch?v={video.get('video_id', '')}"
                         st.markdown(f"[Watch Video]({video_url})")
-                        with st.expander("Show Top 50 Comments"):
+                        with st.expander("Show Top 50 Comments & Sentiment Analysis"):
                             comments = video.get("top_comments", [])
                             if comments:
+                                st.markdown("#### Comments")
                                 for comment in comments:
                                     st.markdown(f"- {comment}")
+                                st.markdown("#### Sentiment Analysis")
+                                sentiments = analyze_sentiment_for_comments(comments)
+                                st.markdown("**Positive Comments:**")
+                                if sentiments.get("positive"):
+                                    for comment in sentiments["positive"]:
+                                        st.markdown(f"- {comment}")
+                                else:
+                                    st.markdown("None")
+                                st.markdown("**Neutral Comments:**")
+                                if sentiments.get("neutral"):
+                                    for comment in sentiments["neutral"]:
+                                        st.markdown(f"- {comment}")
+                                else:
+                                    st.markdown("None")
+                                st.markdown("**Negative Comments:**")
+                                if sentiments.get("negative"):
+                                    for comment in sentiments["negative"]:
+                                        st.markdown(f"- {comment}")
+                                else:
+                                    st.markdown("None")
                             else:
                                 st.markdown("No comments available.")
                         st.markdown("---")
