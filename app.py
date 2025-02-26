@@ -201,7 +201,7 @@ with col1:
 
 if fetch_button:
     with st.spinner("Checking database for existing results..."):
-        cached_results = check_db_for_results(keyword)
+        cached_results = check_db_for_results()
 
     if cached_results:
         st.success(f"✅ Results loaded from database!")
