@@ -60,6 +60,10 @@ def initialize_db():
                 outlier_score REAL DEFAULT 0
             )
         """)
+        # Add indices for better performance
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_video_id ON search_results (video_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_channel_id ON search_results (channel_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_outlier_score ON search_results (outlier_score)")
     else:
         cursor.execute("PRAGMA table_info(search_results)")
         existing_columns = [column[1] for column in cursor.fetchall()]
@@ -97,8 +101,8 @@ def clear_cache():
     conn.commit()
     conn.close()
 
-# Database search function with duplicate removal
-def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None):
+# Database search function with duplicate removal and channel exclusion
+def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by="views", niche_data=None, excluded_channels=None):
     conn = sqlite3.connect("youtube_data.db")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -113,11 +117,15 @@ def search_db_results(niche=None, keyword=None, min_outlier_score=None, sort_by=
     where_conditions = []
     
     if niche and niche_data and niche in niche_data:
-        channel_ids = [channel["channel_id"] for channel in niche_data[niche]]
+        channel_ids = [channel["channel_id"] for channel in niche_data[niche] 
+                      if not excluded_channels or channel["channel_id"] not in excluded_channels]
         if channel_ids:
             channel_placeholders = ",".join(["?"] * len(channel_ids))
             where_conditions.append(f"channel_id IN ({channel_placeholders})")
             params.extend(channel_ids)
+        else:
+            # If all channels are excluded, return empty result
+            return []
     
     if keyword:
         where_conditions.append("(title LIKE ? OR description LIKE ?)")
@@ -193,25 +201,34 @@ def load_niche_channels():
         st.error("Error parsing channels.json - invalid format!")
         return {}
 
-# Compute outlier scores using Modified Z-Score
+# Compute outlier scores using Modified Z-Score with numpy for better performance
 def compute_outlier_scores(videos, metric="views"):
     if not videos:
         return videos
-    values = {video["video_id"]: video.get(metric, 0) for video in videos}
+    
+    video_ids = [video["video_id"] for video in videos]
+    values = np.array([video.get(metric, 0) for video in videos])
+    
     if len(values) < 2:
         for video in videos:
             video["outlier_score"] = 0
         return videos
-    metric_list = list(values.values())
-    median_value = np.median(metric_list)
-    mad = median_abs_deviation(metric_list)
+    
+    median_value = np.median(values)
+    mad = median_abs_deviation(values)
+    
     if mad == 0:
         for video in videos:
             video["outlier_score"] = 0
         return videos
-    scores = {vid: 0.6745 * (value - median_value) / mad for vid, value in values.items()}
-    for video in videos:
-        video["outlier_score"] = round(scores.get(video["video_id"], 0), 2)
+    
+    # Calculate all scores at once
+    scores = 0.6745 * (values - median_value) / mad
+    
+    # Assign scores back to videos
+    for i, video in enumerate(videos):
+        video["outlier_score"] = round(float(scores[i]), 2)
+    
     return videos
 
 # Fetch all videos from a channel with pagination
@@ -320,7 +337,7 @@ def recreate_database():
 # Initialize Database
 initialize_db()
 
-# Apply Styling with additional CSS for metrics
+# Apply Styling with additional CSS for metrics and channel pills
 st.set_page_config(layout="wide", page_title="YouTube Outlier Detector")
 st.markdown("""
 <style>
@@ -351,11 +368,49 @@ st.markdown("""
     div[data-testid="stMetricLabel"] {
         font-size: 12px !important;
     }
+    /* Channel pill styling */
+    .channel-pill-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 10px 0;
+    }
+    .channel-pill {
+        background-color: #f0f2f6;
+        border-radius: 20px;
+        padding: 5px 10px;
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+    }
+    .channel-pill-active {
+        background-color: #e0f7fa;
+        border: 1px solid #26c6da;
+    }
+    .channel-pill-excluded {
+        background-color: #ffebee;
+        border: 1px solid #ef5350;
+        text-decoration: line-through;
+    }
+    .channel-pill-button {
+        cursor: pointer;
+        margin-left: 5px;
+        color: #616161;
+        font-weight: bold;
+    }
+    .channel-pill-button:hover {
+        color: #ef5350;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🎥 YouTube Outlier Video Detector")
 st.markdown("Find standout videos across channels based on performance metrics")
+
+# Initialize session state for excluded channels if it doesn't exist
+if 'excluded_channels' not in st.session_state:
+    st.session_state.excluded_channels = set()
 
 # Sidebar for controls
 with st.sidebar:
@@ -368,6 +423,89 @@ with st.sidebar:
         selected_niche = None
     else:
         selected_niche = st.selectbox("Select a Niche", niches)
+    
+    # Channel selection section
+    if selected_niche:
+        st.subheader("Channel Selection")
+        st.markdown("Click on a channel to exclude/include it in the search:")
+        
+        # Create a container for channel pills
+        channel_pills_html = '<div class="channel-pill-container">'
+        
+        for channel in niche_data.get(selected_niche, []):
+            channel_id = channel["channel_id"]
+            channel_name = channel["channel_name"]
+            
+            is_excluded = channel_id in st.session_state.excluded_channels
+            pill_class = "channel-pill channel-pill-excluded" if is_excluded else "channel-pill channel-pill-active"
+            
+            channel_pills_html += f"""
+            <div class="{pill_class}">
+                {channel_name}
+                <span class="channel-pill-button" onclick="
+                    const data = {{
+                        channel_id: '{channel_id}',
+                        action: '{'include' if is_excluded else 'exclude'}'
+                    }};
+                    window.parent.postMessage({{
+                        type: 'streamlit:toggleChannel',
+                        data: data
+                    }}, '*');
+                ">{"+" if is_excluded else "×"}</span>
+            </div>
+            """
+        
+        channel_pills_html += '</div>'
+        
+        # Display the channel pills
+        st.markdown(channel_pills_html, unsafe_allow_html=True)
+        
+        # Handle channel toggle from JavaScript via a hidden button click
+        toggle_channel_placeholder = st.empty()
+        toggle_channel = toggle_channel_placeholder.button("Toggle Channel", key="toggle_channel_btn", help="This button is programmatically clicked by JavaScript")
+        
+        if toggle_channel:
+            # Extract channel ID and action from query parameters
+            query_params = st.experimental_get_query_params()
+            channel_id = query_params.get("channel_id", [""])[0]
+            action = query_params.get("action", [""])[0]
+            
+            if channel_id and action:
+                if action == "exclude" and channel_id not in st.session_state.excluded_channels:
+                    st.session_state.excluded_channels.add(channel_id)
+                elif action == "include" and channel_id in st.session_state.excluded_channels:
+                    st.session_state.excluded_channels.remove(channel_id)
+                
+                # Clear query parameters
+                st.experimental_set_query_params()
+                # Force a rerun to update the UI
+                st.experimental_rerun()
+        
+        # Alternative channel selection method using checkboxes (no JavaScript needed)
+        st.markdown("### Alternative Channel Selection")
+        excluded_channels_temp = set(st.session_state.excluded_channels)
+        
+        for channel in niche_data.get(selected_niche, []):
+            channel_id = channel["channel_id"]
+            channel_name = channel["channel_name"]
+            
+            is_included = st.checkbox(
+                f"Include {channel_name}", 
+                value=channel_id not in st.session_state.excluded_channels,
+                key=f"channel_{channel_id}"
+            )
+            
+            if not is_included:
+                excluded_channels_temp.add(channel_id)
+            elif channel_id in excluded_channels_temp:
+                excluded_channels_temp.remove(channel_id)
+        
+        st.session_state.excluded_channels = excluded_channels_temp
+        
+        # Button to reset channel selection
+        if st.button("Reset Channel Selection"):
+            st.session_state.excluded_channels = set()
+            st.experimental_rerun()
     
     keyword = st.text_input("🔎 Enter keyword to search within videos")
     
@@ -400,6 +538,40 @@ with st.sidebar:
         recreate_database()
         st.success("Database has been recreated with the updated schema.")
 
+# Add JavaScript to handle channel toggling
+st.markdown("""
+<script>
+// Listen for messages from the channel pills
+window.addEventListener('message', function(event) {
+    if (event.data.type === 'streamlit:toggleChannel') {
+        const channelData = event.data.data;
+        
+        // Set query parameters to communicate with Streamlit
+        const searchParams = new URLSearchParams(window.location.search);
+        searchParams.set('channel_id', channelData.channel_id);
+        searchParams.set('action', channelData.action);
+        
+        // Update URL (doesn't reload the page)
+        window.history.pushState({}, '', '?' + searchParams.toString());
+        
+        // Click the hidden button to trigger the Streamlit event
+        setTimeout(() => {
+            document.querySelector('[data-testid="stButton"] button').click();
+        }, 100);
+    }
+});
+</script>
+""", unsafe_allow_html=True)
+
+# Display currently excluded channels info
+if st.session_state.excluded_channels:
+    excluded_channel_names = []
+    for channel in niche_data.get(selected_niche, []):
+        if channel["channel_id"] in st.session_state.excluded_channels:
+            excluded_channel_names.append(channel["channel_name"])
+    
+    st.warning(f"Currently excluding {len(excluded_channel_names)} channels: {', '.join(excluded_channel_names)}")
+
 # Main content area
 if fetch_button and selected_niche:
     with st.spinner("Searching for videos..."):
@@ -409,7 +581,8 @@ if fetch_button and selected_niche:
                 keyword=keyword, 
                 min_outlier_score=outlier_threshold,
                 sort_by=sort_options[sort_option],
-                niche_data=niche_data
+                niche_data=niche_data,
+                excluded_channels=st.session_state.excluded_channels
             )
             
             refresh_needed = needs_refresh(db_results, max_age_days=refresh_days) or force_refresh
@@ -419,9 +592,13 @@ if fetch_button and selected_niche:
                 video_data = db_results
             else:
                 st.info("Fetching fresh data from YouTube...")
-                niche_channels = niche_data.get(selected_niche, [])
+                niche_channels = [
+                    channel for channel in niche_data.get(selected_niche, []) 
+                    if channel["channel_id"] not in st.session_state.excluded_channels
+                ]
+                
                 if not niche_channels:
-                    st.warning(f"No channels found for the niche: {selected_niche}")
+                    st.warning(f"No channels selected for the niche: {selected_niche}")
                     video_data = []
                 else:
                     all_videos = []
@@ -480,11 +657,23 @@ if fetch_button and selected_niche:
                     df_display.columns = display_names
                     st.subheader("Results Overview")
                     st.dataframe(df_display, height=300)
+                
+                # Add pagination for results
+                items_per_page = 10
+                total_pages = len(video_data) // items_per_page + (1 if len(video_data) % items_per_page > 0 else 0)
+                if total_pages > 1:
+                    page = st.slider("Page", 1, max(1, total_pages), 1)
+                    start_idx = (page - 1) * items_per_page
+                    end_idx = min(start_idx + items_per_page, len(video_data))
+                    display_videos = video_data[start_idx:end_idx]
+                    st.info(f"Showing results {start_idx+1}-{end_idx} of {len(video_data)}")
+                else:
+                    display_videos = video_data[:10]
+                
                 st.subheader("Top Videos")
-                top_videos = video_data[:10]
                 # Create two columns for displaying videos side by side
                 cols = st.columns(2)
-                for idx, video in enumerate(top_videos):
+                for idx, video in enumerate(display_videos):
                     with cols[idx % 2]:
                         st.image(video.get("thumbnail"), use_container_width=True)
                         st.markdown(f"### {video.get('title', 'No Title')}")
@@ -522,10 +711,11 @@ else:
     ## How to use this app
     
     1. **Select a niche** from the dropdown menu
-    2. Optionally **enter a keyword** to search within video titles and descriptions
-    3. Adjust the **minimum outlier score** to filter for truly exceptional videos
-    4. Choose how to **sort** your results
-    5. Click the **Find Outliers** button to see the results
+    2. **Select/deselect channels** you want to include in your search
+    3. Optionally **enter a keyword** to search within video titles and descriptions
+    4. Adjust the **minimum outlier score** to filter for truly exceptional videos
+    5. Choose how to **sort** your results
+    6. Click the **Find Outliers** button to see the results
     
     ## What is an outlier score?
     
