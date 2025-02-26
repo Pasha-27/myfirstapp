@@ -45,13 +45,20 @@ def clear_cache():
     conn.close()
 
 # ✅ Check if data exists in the database
-def check_db_for_results(keyword):
+def check_db_for_results():
     conn = sqlite3.connect("youtube_data.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT keyword, video_id, title, description, thumbnail, published_date, views, likes, comments, outlier_score FROM search_results WHERE keyword=?", (keyword,))
-    results = cursor.fetchall()
+    
+    try:
+        cursor.execute("SELECT video_id, title, description, thumbnail, published_date, views, likes, comments, outlier_score FROM search_results")
+        results = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        st.error(f"Database Error: {e}")
+        return []
+    
     conn.close()
     return results
+
 
 # ✅ Store new search results in the database
 def save_to_db(keyword, video_data):
@@ -197,18 +204,22 @@ if fetch_button:
         cached_results = check_db_for_results(keyword)
 
     if cached_results:
-        st.success(f"✅ Results loaded from database!")
+    st.success(f"✅ Results loaded from database!")
 
-        video_data = pd.DataFrame(cached_results, columns=["keyword", "video_id", "title", "description", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
+    video_data = pd.DataFrame(cached_results, columns=["video_id", "title", "description", "thumbnail", "published_date", "views", "likes", "comments", "outlier_score"])
 
-        for col in ["views", "likes", "comments", "outlier_score"]:
-            video_data[col] = pd.to_numeric(video_data[col], errors="coerce").fillna(0)
+    # Convert numeric columns
+    for col in ["views", "likes", "comments", "outlier_score"]:
+        video_data[col] = pd.to_numeric(video_data[col], errors="coerce").fillna(0)
 
+    # ✅ Apply Keyword Filter in Python
+    if keyword:
         video_data = video_data[
             ((video_data["title"].str.contains(keyword, case=False, na=False)) |
              (video_data["description"].str.contains(keyword, case=False, na=False))) &
             (video_data["outlier_score"] > 5)
         ]
+
     else:
         with st.spinner("Fetching videos from YouTube..."):
             niche_channels = niche_data[selected_niche]
